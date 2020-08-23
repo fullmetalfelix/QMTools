@@ -18,7 +18,7 @@ typedef struct Cube Cube;
 
 
 // GA population size
-#define POPSIZE 128
+//#define POPSIZE 128
 
 // size of DNA for ONE element
 #define DNASIZE 7

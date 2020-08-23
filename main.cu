@@ -14,9 +14,8 @@
 int main(int argc, char **argv) {
 
 	// CREATE THE CONVOLVER AND LOAD REFERENCE MOLECULES
-
+  
 	Convolver cnv;
-
 
 	cnv.nrefs = 1;
 	cnv.refs = (Cube*)calloc(sizeof(Cube), cnv.nrefs);
@@ -32,10 +31,12 @@ int main(int argc, char **argv) {
 
 	// setup the GA
 	cnv.populationSize = 1;
+	cnv.mutationRate = 0.01;
 
-	// setup the convolver
+	// setup the convolver - this has to be done after popsize and reading refcubes
 	convolver_setup(&cnv);
 
+	
 
 	// WRAP THE REF CUBES
 	for (int i = 0; i < cnv.nrefs; ++i) {
