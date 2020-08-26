@@ -312,6 +312,42 @@ int ga_compare_fitness (const void *aa, const void *bb) {
   else return 0;
 }
 
+
+void convolver_checkpoint_write(Convolver *cnv) {
+
+	FILE *fout = fopen("checkpoint.rst", "wb");
+
+	fwrite(&cnv->populationSize, sizeof(int), 1, fout);
+
+	for(int i=0; i<cnv->populationSize; i++) {
+		fwrite(cnv->population[i].dna, sizeof(number), DNASIZE, fout);
+		fwrite(&cnv->population[i].fitness, sizeof(number), 1, fout);
+	}
+
+	fclose(fout);
+}
+
+void convolver_checkpoint_read(Convolver *cnv, const char* filename) {
+
+	FILE *fout = fopen(filename, "rb");
+
+	int psize; fread(&cnv->populationSize, sizeof(int), 1, fout);
+	if(psize > cnv->populationSize) {
+		psize = cnv->populationSize;
+		printf("WARNING: not all elements in the checkpoint will be read\n");
+	} else if(psize < cnv->populationSize) {
+
+		printf("WARNING: population is larger than the one in checkpoint\n");
+	}
+
+	for(int i=0; i<psize; i++) {
+		fread(cnv->population[i].dna, sizeof(number), DNASIZE, fout);
+		fread(&cnv->population[i].fitness, sizeof(number), 1, fout);
+	}
+
+	fclose(fout);
+}
+
 void convolver_evaluate_population(Convolver *cnv) {
 
 
@@ -321,6 +357,9 @@ void convolver_evaluate_population(Convolver *cnv) {
 
 	// sort the elements by fitness... sorting of structs by fitness field
 	qsort(cnv->population, cnv->populationSize, sizeof(Element), ga_compare_fitness);
+
+	// write restart file
+	convolver_checkpoint_write(cnv);
 }
 
 
@@ -358,6 +397,8 @@ void ga_select_test(Convolver *cnv) {
 
 
 
+
+
 /// Create the offspring population and switch the pointers
 void convolver_evolve(Convolver *cnv) {
 
@@ -371,27 +412,37 @@ void convolver_evolve(Convolver *cnv) {
 		o->dna = cnv->dna2 + DNASIZE * i;
 		o->fitness = 0;
 
-		// select parents
-		int p1 = ga_select(cnv, -1); printf("p1 %i\n", p1);
-		int p2 = ga_select(cnv, p1); printf("p2 %i\n", p2);
-		//ga_element_mix(engine, &parents[p1], &parents[p2], &child[i]);
+		if(i<cnv->keepers) {
+			// keep the element... copy dna
+			memcpy(o->dna, cnv->population[i].dna, sizeof(number) * DNASIZE);
 
-		// mix
-		for(int j=0; j<DNASIZE; j++) {
-			// take value from either parent
+		} else if(i >= cnv->populationSize - cnv->tossers) {
+			// completely rerandomize
+			convolver_element_random(o);
+
+		} else {
+			// normal mix & mutate
+
+			// select parents
+			int p1 = ga_select(cnv, -1); printf("p1 %i\n", p1);
+			int p2 = ga_select(cnv, p1); printf("p2 %i\n", p2);
+
+			// mix
+			for(int j=0; j<DNASIZE; j++) {
+				// take value from either parent
+				r = (number)rand()/(number)(RAND_MAX);
+				o->dna[j] = (r > 0.5f)? cnv->population[p1].dna[j] : cnv->population[p2].dna[j];
+			}
+
+			// mutate
 			r = (number)rand()/(number)(RAND_MAX);
-			o->dna[j] = (r > 0.5f)? cnv->population[p1].dna[j] : cnv->population[p2].dna[j];
+			if(r < cnv->mutationRate) {
+				r = DNASIZE * ((number)rand()/RAND_MAX);
+				int mID = (int)floor(r);
+				mID = mID % DNASIZE;
+				(*mutationFunctions[mID])(o, mID);
+			}
 		}
-
-		// mutate
-		r = (number)rand()/(number)(RAND_MAX);
-		if(r < cnv->mutationRate) {
-			r = DNASIZE * ((number)rand()/RAND_MAX);
-			int mID = (int)floor(r);
-			mID = mID % DNASIZE;
-			(*mutationFunctions[mID])(o, mID);
-		}
-
 	}
 
 	// now we have the new population in offspring
@@ -407,6 +458,7 @@ void convolver_evolve(Convolver *cnv) {
 	cnv->population = cnv->offspring;
 	cnv->offspring = tmpe;
 }
+
 
 
 

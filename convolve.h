@@ -123,6 +123,8 @@ struct Convolver {
 
 	number mutationRate;
 	number lambda;
+	int keepers;
+	int tossers;
 
 
 	int nrefs;
@@ -158,7 +160,7 @@ void convolver_population_init(Convolver *cnv);
 void convolver_evaluate_population(Convolver *cnv);
 void convolver_evolve(Convolver *cnv);
 void ga_select_test(Convolver *cnv);
-
+void convolver_checkpoint_read(Convolver *cnv, const char* filename);
 
 
 // main object functions

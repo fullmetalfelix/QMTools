@@ -8,7 +8,7 @@
 #include "cube.h"
 #include "convolve.h"
 #include <assert.h>
-
+#include <unistd.h>
 
 
 int main(int argc, char **argv) {
@@ -28,11 +28,57 @@ int main(int argc, char **argv) {
 
 	// ------------------
 
-
 	// setup the GA
-	cnv.populationSize = 256;
+	cnv.populationSize = 64;
 	cnv.mutationRate = 0.01f;
 	cnv.lambda = 0.6f;
+	cnv.keepers = 0;
+	cnv.tossers = 0;
+
+	// read command line options
+	int opt;
+	char *restartfile = NULL;
+
+	// put ':' in the starting of the 
+	// string so that program can  
+	//distinguish between '?' and ':'  
+	while((opt = getopt(argc, argv, ":p:l:m:k:t:hR:")) != -1) {  
+		switch(opt) {  
+			case 'p':
+				cnv.populationSize = atoi(optarg);
+				break;
+			case 'k':
+				cnv.keepers = atoi(optarg);
+				break;
+			case 't':
+				cnv.tossers = atoi(optarg);
+				break;
+			case 'l':
+				cnv.lambda = (number)atof(optarg);
+				break;
+			case 'm':
+				cnv.mutationRate = (number)atof(optarg);
+				break;
+			case 'R':
+				restartfile = optarg;
+			case ':':
+				printf("option needs a value\n");
+				break;
+			case '?':
+				printf("unknown option: %c\n", optopt);
+				break;
+			case 'h':
+				printf("Command-line options:\n");
+				printf("-p [int]\tpopulation size\n");
+				printf("-k [int]\tkeepers\n");
+				printf("-t [int]\ttossers\n");
+				printf("-l [float]\tselection lambda\n");
+				printf("-m [float]\tmutation rate\n");
+				return 0;
+				break;
+		}
+	}
+
 
 	// setup the convolver - this has to be done after popsize and reading refcubes
 	convolver_setup(&cnv);
@@ -40,7 +86,7 @@ int main(int argc, char **argv) {
 
 	// WRAP THE REF CUBES ******************************
 	// this requires the thing to be setup cos itz done on the GPU
-	for (int i = 0; i < cnv.nrefs; ++i) {
+	for (int i=0; i<cnv.nrefs; ++i) {
 		
 		cpu_cube_loadref(&cnv, cnv.refs+i); // this is not tested at all
 
@@ -59,9 +105,15 @@ int main(int argc, char **argv) {
 
 	// start the GA run
 	convolver_population_init(&cnv);
+	if(restartfile != NULL) {
+		printf("restarting from: %s\n", restartfile);
+		convolver_checkpoint_read(&cnv, restartfile);	
+	}
+
 	ga_select_test(&cnv);
 
-	for(int gen=0; gen<1000; gen++){
+
+	for(int gen=0; gen<1000; gen++) {
 		printf("starting generation %05i...\n", gen);
 		
 		convolver_evaluate_population(&cnv);
