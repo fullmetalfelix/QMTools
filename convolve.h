@@ -112,15 +112,17 @@ typedef struct Convolver Convolver;
 struct Convolver {
 
 	unsigned int populationSize;
-	Element *population;
+	Element *population, *offspring;
 	number *dna, *d_dna;
 	number *dna2;
+	number *cdf;
 
 	//number *fitness;
 	//number *d_fitness;
 	number *d_fitblok; // this stores the 
 
 	number mutationRate;
+	number lambda;
 
 
 	int nrefs;
@@ -154,6 +156,8 @@ struct Convolver {
 // GA functions
 void convolver_population_init(Convolver *cnv);
 void convolver_evaluate_population(Convolver *cnv);
+void convolver_evolve(Convolver *cnv);
+void ga_select_test(Convolver *cnv);
 
 
 
@@ -165,12 +169,6 @@ void convolver_clear(Convolver *cnv);
 
 
 
-/*
-void cpu_cube_unwrap(Cube *cube, number *dst, number *src);
-void cpu_A0_propagate(Cube *cube);
-void cpu_A0_propagate_all(Cube *cube);
-void cpu_Q_propagate(Cube *cube);
-*/
 
 // GPU wrappers functions
 void convolver_reset(Convolver *cnv, Cube *cube);
@@ -178,7 +176,7 @@ void convolver_makeP(Convolver *cnv, Cube *cube);
 
 void cpu_cube_loadref(Convolver *cnv, Cube *cube);
 void cpu_A0_propagate(Convolver *cnv, Cube *cube);
-int cpu_Q_propagate(Convolver *cnv, Cube *cube);
+int  cpu_Q_propagate(Convolver *cnv, Cube *cube);
 void cpu_Q_sum(Convolver *cnv, Cube *cube);
 
 

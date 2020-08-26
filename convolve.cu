@@ -74,9 +74,10 @@ void convolver_setup(Convolver *cnv) {
 	cnv->gpu_block = dim3(8,8,8);
 
 	cnv->population = (Element*)malloc(sizeof(Element) * cnv->populationSize);
+	cnv->offspring  = (Element*)malloc(sizeof(Element) * cnv->populationSize);
 	cnv->dna = (number*)malloc(sizeof(number) * cnv->populationSize * DNASIZE);
 	cnv->dna2= (number*)malloc(sizeof(number) * cnv->populationSize * DNASIZE);
-	//cnv->fitness = (number*)calloc(sizeof(number), cnv->populationSize);
+	cnv->cdf = (number*)malloc(sizeof(number) * cnv->populationSize);
 	cnv->dqTolerance = 1.0e-32;
 
 
@@ -117,10 +118,11 @@ void convolver_setup(Convolver *cnv) {
 
 void convolver_clear(Convolver *cnv) {
 
-	free(cnv->population);
+	free(cnv->population); free(cnv->offspring);
 	free(cnv->dna);
 	free(cnv->dna2);
-	//free(cnv->fitness);
+	free(cnv->cdf);
+	
 
 	cudaFree(cnv->d_dna);
 	//cudaFree(cnv->d_fitness);
@@ -139,28 +141,77 @@ void convolver_clear(Convolver *cnv) {
 
 
 
+
+
+
+void convolver_mutation_0(Element *e, int mID) { // PARAM_A0_DIFF
+
+	e->dna[mID] = 1 * (number)rand()/(number)(RAND_MAX);
+}
+
+void convolver_mutation_123(Element *e, int mID) { // PARAM_A0_LOS123
+	
+	e->dna[mID] = 1 * (number)rand()/(number)(RAND_MAX);
+}
+
+void convolver_mutation_4(Element *e, int mID) { // PARAM_A0_AGEN
+
+	e->dna[mID] = 1 * (number)rand()/(number)(RAND_MAX);
+}
+
+void convolver_mutation_56(Element *e, int mID) { // PARAM_QQ_DIFF/TRNS
+
+	e->dna[mID] = 0.5 * (number)rand()/(number)(RAND_MAX);
+}
+
+void (*mutationFunctions[DNASIZE])(Element *e, int mID) = {
+	convolver_mutation_0, 
+	convolver_mutation_123,
+	convolver_mutation_123,
+	convolver_mutation_123,
+	convolver_mutation_4,
+	convolver_mutation_56,
+	convolver_mutation_56
+};
+
+
 void convolver_element_random(Element *e) {
 
-	e->dna[PARAM_A0_DIFF] = 1 * (float)rand()/(float)(RAND_MAX);
-	e->dna[PARAM_A0_AGEN] = 1 * ((float)rand()/(float)(RAND_MAX));
+	for(int i=0; i<DNASIZE; i++)
+		(*mutationFunctions[i])(e, i);
 
-	// good limit for these ones?
-	e->dna[PARAM_A0_LOS1] = 1 * ((float)rand()/(float)(RAND_MAX));
-	e->dna[PARAM_A0_LOS2] = 1 * ((float)rand()/(float)(RAND_MAX));
-	e->dna[PARAM_A0_LOS3] = 1 * ((float)rand()/(float)(RAND_MAX));
 
 	// magnitude of gen/los?
-	number losmag = e->dna[PARAM_A0_LOS1] + e->dna[PARAM_A0_LOS2] + e->dna[PARAM_A0_LOS3];
-	printf("magn gen/loss: %f/%f\n", e->dna[PARAM_A0_AGEN], losmag);
-
-
-	e->dna[PARAM_QQ_DIFF] = 0.5f * (float)rand()/(float)(RAND_MAX);
-	e->dna[PARAM_QQ_TRNS] = 0.5f * (float)rand()/(float)(RAND_MAX);
+	//number losmag = e->dna[PARAM_A0_LOS1] + e->dna[PARAM_A0_LOS2] + e->dna[PARAM_A0_LOS3];
+	//printf("magn gen/loss: %f/%f\n", e->dna[PARAM_A0_AGEN], losmag);
 }
 
 
 void convolver_population_init(Convolver *cnv) {
 
+	// setup the cumulative distro function for selection
+	number *pdf = (number*)malloc(sizeof(number)*cnv->populationSize);
+	number *cdf = cnv->cdf;
+
+	number area = 0;
+
+	for(int i=0; i<cnv->populationSize; i++) {
+		pdf[i] = exp(-cnv->lambda * (number)i / cnv->populationSize);
+		area += pdf[i];
+	}
+	
+	for(int i=0; i<cnv->populationSize; i++) {
+		pdf[i] /= area;
+		cdf[i] = pdf[i];
+	}
+	
+	for(int i=1; i<cnv->populationSize; i++)
+		cdf[i] += cdf[i-1];
+
+	free(pdf);
+	// ---------------------------------------------------
+
+	// initialize a population
 	for (int i=0; i<cnv->populationSize; ++i) {
 		cnv->population[i].dna = cnv->dna + DNASIZE*i;
 		convolver_element_random(cnv->population + i);
@@ -214,9 +265,9 @@ void convolver_evaluate_cube(Convolver *cnv, int cID, int mID) {
 
 	#ifdef DEBUGPRINT
 	sprintf(fname, "A0_%i_%05i_%05i.bin", repo,mID,cID);
-	cube_debug_print(cnv->refs, cnv->d_A0, fname);
+	//cube_debug_print(cnv->refs, cnv->d_A0, fname);
 	sprintf(fname, "Q_%i_%05i_%05i.bin", repo,mID,cID);
-	cube_debug_print(cnv->refs, cnv->d_Q, fname);
+	//cube_debug_print(cnv->refs, cnv->d_Q, fname);
 	#endif
 
 	// compute fitness on this cube
@@ -270,13 +321,92 @@ void convolver_evaluate_population(Convolver *cnv) {
 
 	// sort the elements by fitness... sorting of structs by fitness field
 	qsort(cnv->population, cnv->populationSize, sizeof(Element), ga_compare_fitness);
-	
-
-
 }
 
 
 
+int ga_select(Convolver *cnv, int except);
+int ga_select(Convolver *cnv, int except) {
+
+	int picked = except;
+	number r = (number)rand()/(number)(RAND_MAX);
+	for (int i=0; i<cnv->populationSize; i++) {
+		if (cnv->cdf[i] >= r) {
+			picked = i;
+			break;
+		}
+	}
+
+	if(picked == except) {
+		picked = (picked ==  cnv->populationSize-1)? picked - 1 : picked + 1;
+	}
+
+	return picked;
+}
+
+
+void ga_select_test(Convolver *cnv) {
+
+	printf("selection test...\n");
+	FILE *fout = fopen("select.test", "w");
+	for(int i=0; i<100000; i++)
+		fprintf(fout, "%i\n", ga_select(cnv, -1));
+
+	fclose(fout);
+}
+
+
+
+
+/// Create the offspring population and switch the pointers
+void convolver_evolve(Convolver *cnv) {
+
+	printf("evolving...\n");
+	number r;
+
+	for(int i=0; i<cnv->populationSize; i++) {
+
+		printf("selecting %05i \n", i);
+		Element *o = cnv->offspring + i;
+		o->dna = cnv->dna2 + DNASIZE * i;
+		o->fitness = 0;
+
+		// select parents
+		int p1 = ga_select(cnv, -1); printf("p1 %i\n", p1);
+		int p2 = ga_select(cnv, p1); printf("p2 %i\n", p2);
+		//ga_element_mix(engine, &parents[p1], &parents[p2], &child[i]);
+
+		// mix
+		for(int j=0; j<DNASIZE; j++) {
+			// take value from either parent
+			r = (number)rand()/(number)(RAND_MAX);
+			o->dna[j] = (r > 0.5f)? cnv->population[p1].dna[j] : cnv->population[p2].dna[j];
+		}
+
+		// mutate
+		r = (number)rand()/(number)(RAND_MAX);
+		if(r < cnv->mutationRate) {
+			r = DNASIZE * ((number)rand()/RAND_MAX);
+			int mID = (int)floor(r);
+			mID = mID % DNASIZE;
+			(*mutationFunctions[mID])(o, mID);
+		}
+
+	}
+
+	// now we have the new population in offspring
+	// and the new dna in dna2
+
+	// switch the dna pointers
+	number *tmp = cnv->dna;
+	cnv->dna = cnv->dna2;
+	cnv->dna2= tmp;
+
+	// switch the population pointers
+	Element *tmpe = cnv->population;
+	cnv->population = cnv->offspring;
+	cnv->offspring = tmpe;
+}
 
 
 

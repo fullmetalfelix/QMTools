@@ -92,7 +92,8 @@ void convolver_reset(Convolver *cnv, Cube *cube) {
 		cnv->d_PmQ
 	);
 	cudaError = cudaGetLastError();
-	printf("RESET: %s\n", cudaGetErrorString(cudaError));
+	if(cudaError != cudaSuccess)
+		printf("RESET: %s\n", cudaGetErrorString(cudaError));
 	assert(cudaError == cudaSuccess);
 
 	cudaDeviceSynchronize();
@@ -852,7 +853,7 @@ __global__ void gpu_Q_sum(number *Q, number *partials, number qtot) {
 		} // end loop over batches
 
 		if(sidx == 0) {
-			printf("GPU sum %f, expected %f \n", totalsum, qtot);
+			//printf("GPU sum %f, expected %f \n", totalsum, qtot);
 			partials[0] = qtot / totalsum;
 			blockCount = 0;
 		}
@@ -889,7 +890,7 @@ void cpu_Q_sum(Convolver *cnv, Cube *cube) {
 	// copy back the total
 	cudaError = cudaMemcpy(&total, cnv->d_partials, sizeof(number), cudaMemcpyDeviceToHost);
 	assert(cudaError == cudaSuccess);
-	printf("total e: %f\n", total);
+	//printf("total e: %f\n", total);
 	
 	assert(total == total);
 
@@ -995,7 +996,7 @@ __global__ void gpu_Q_diff(number *Q, number *Qref, number *partials) {
 		} // end loop over batches
 
 		if(sidx == 0) {
-			printf("GPU sum %f\n", totalsum);
+			//printf("GPU sum %f\n", totalsum);
 			partials[0] = 1.0f / totalsum;
 			blockCount = 0;
 		}
@@ -1522,7 +1523,6 @@ void cpu_evaluate_element(Convolver *convo, int eID) {
 
 			
 			// check convergence
-
 
 
 			converged = 1;

@@ -30,15 +30,16 @@ int main(int argc, char **argv) {
 
 
 	// setup the GA
-	cnv.populationSize = 1;
-	cnv.mutationRate = 0.01;
+	cnv.populationSize = 256;
+	cnv.mutationRate = 0.01f;
+	cnv.lambda = 0.6f;
 
 	// setup the convolver - this has to be done after popsize and reading refcubes
 	convolver_setup(&cnv);
 
-	
 
-	// WRAP THE REF CUBES
+	// WRAP THE REF CUBES ******************************
+	// this requires the thing to be setup cos itz done on the GPU
 	for (int i = 0; i < cnv.nrefs; ++i) {
 		
 		cpu_cube_loadref(&cnv, cnv.refs+i); // this is not tested at all
@@ -50,19 +51,29 @@ int main(int argc, char **argv) {
 
 		#endif
 	}
-
-	
-
-	
+	printf("reference cubes wrapped.\n");
 	
 	// *************************************************
 
 
 
-
+	// start the GA run
 	convolver_population_init(&cnv);
+	ga_select_test(&cnv);
 
-	convolver_evaluate_population(&cnv);
+	for(int gen=0; gen<1000; gen++){
+		printf("starting generation %05i...\n", gen);
+		
+		convolver_evaluate_population(&cnv);
+
+		// TODO: write a restart/output
+
+		convolver_evolve(&cnv);
+
+	}
+	
+
+
 
 
 
