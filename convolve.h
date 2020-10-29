@@ -27,7 +27,7 @@ typedef struct Cube Cube;
 #define NREFS 10
 
 // DEBUG VALUE!
-#define MAXREPOS 1000
+#define MAXREPOS 16000
 
 // maximum number of blocks fitting in one grid (cube 512**3 with blocksize 8**3)
 #define MAXBLOCKS 262144
@@ -111,6 +111,8 @@ struct Element {
 typedef struct Convolver Convolver;
 struct Convolver {
 
+	int alt;
+
 	unsigned int populationSize;
 	Element *population, *offspring;
 	number *dna, *d_dna;
@@ -141,6 +143,7 @@ struct Convolver {
 	number *d_Q, *d_Qn;
 	number *d_PmQ;
 	number *d_A0, *d_A0n;
+	number *d_Ve;
 	number *d_partials;
 	number *d_Qref;
 
@@ -166,19 +169,23 @@ void convolver_checkpoint_read(Convolver *cnv, const char* filename);
 // main object functions
 void convolver_setup(Convolver *cnv);
 void convolver_clear(Convolver *cnv);
-
-
-
+void convolver_evaluate_model(Convolver *cnv, int mID); // TEMP
+void asd(Convolver *cnv, int cID, int mID); // TESTER
 
 
 
 // GPU wrappers functions
 void convolver_reset(Convolver *cnv, Cube *cube);
 void convolver_makeP(Convolver *cnv, Cube *cube);
+void convolver_makePmQ(Convolver *cnv, Cube *cube);
+void convolver_makeVNN(Convolver *cnv, Cube *cube);
+void cpu_cube_unwrap(Convolver *cnv, Cube *cube, number *gpusrc, number *gpudst);
 
 void cpu_cube_loadref(Convolver *cnv, Cube *cube);
 void cpu_A0_propagate(Convolver *cnv, Cube *cube);
-int  cpu_Q_propagate(Convolver *cnv, Cube *cube);
+number cpu_A0_propagate_tally(Convolver *cnv, Cube *cube);
+void cpu_Vee_propagate(Convolver *cnv, Cube *cube);
+number cpu_Q_propagate(Convolver *cnv, Cube *cube, int wstats);
 void cpu_Q_sum(Convolver *cnv, Cube *cube);
 
 

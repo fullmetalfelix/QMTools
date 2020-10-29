@@ -108,6 +108,7 @@ void convolver_setup(Convolver *cnv) {
 	cudaError = cudaMalloc((void**)&cnv->d_PmQ, sizeof(number) * cnv->maxpts); assert(cudaError == cudaSuccess);
 	cudaError = cudaMalloc((void**)&cnv->d_A0, sizeof(number) * cnv->maxpts); assert(cudaError == cudaSuccess);
 	cudaError = cudaMalloc((void**)&cnv->d_A0n, sizeof(number) * cnv->maxpts); assert(cudaError == cudaSuccess);
+	cudaError = cudaMalloc((void**)&cnv->d_Ve, sizeof(number) * cnv->maxpts); assert(cudaError == cudaSuccess);
 	cudaError = cudaMalloc((void**)&cnv->d_partials, sizeof(number) * cnv->maxgrd); assert(cudaError == cudaSuccess);
 	cudaError = cudaMalloc((void**)&cnv->d_deltaQmax, sizeof(uint)); assert(cudaError == cudaSuccess);
 
@@ -134,6 +135,7 @@ void convolver_clear(Convolver *cnv) {
 	cudaFree(cnv->d_P);
 	cudaFree(cnv->d_Q); cudaFree(cnv->d_Qn); cudaFree(cnv->d_Qref);
 	cudaFree(cnv->d_PmQ);
+	cudaFree(cnv->d_Ve);
 	cudaFree(cnv->d_A0);cudaFree(cnv->d_A0n);
 	cudaFree(cnv->d_partials);
 	cudaFree(cnv->d_deltaQmax);
@@ -146,22 +148,24 @@ void convolver_clear(Convolver *cnv) {
 
 void convolver_mutation_0(Element *e, int mID) { // PARAM_A0_DIFF
 
-	e->dna[mID] = 1 * (number)rand()/(number)(RAND_MAX);
+	e->dna[mID] = 0.9f * (number)rand()/(number)(RAND_MAX);
 }
 
 void convolver_mutation_123(Element *e, int mID) { // PARAM_A0_LOS123
 	
 	e->dna[mID] = 1 * (number)rand()/(number)(RAND_MAX);
+	//e->dna[mID] = 0.3f;
 }
 
 void convolver_mutation_4(Element *e, int mID) { // PARAM_A0_AGEN
 
-	e->dna[mID] = 1 * (number)rand()/(number)(RAND_MAX);
+	e->dna[mID] = 2 * (number)rand()/(number)(RAND_MAX);
+	//e->dna[mID] = 1.0f;
 }
 
 void convolver_mutation_56(Element *e, int mID) { // PARAM_QQ_DIFF/TRNS
 
-	e->dna[mID] = 0.5 * (number)rand()/(number)(RAND_MAX);
+	e->dna[mID] = 0.5f * (number)rand()/(number)(RAND_MAX);
 }
 
 void (*mutationFunctions[DNASIZE])(Element *e, int mID) = {
@@ -179,11 +183,6 @@ void convolver_element_random(Element *e) {
 
 	for(int i=0; i<DNASIZE; i++)
 		(*mutationFunctions[i])(e, i);
-
-
-	// magnitude of gen/los?
-	//number losmag = e->dna[PARAM_A0_LOS1] + e->dna[PARAM_A0_LOS2] + e->dna[PARAM_A0_LOS3];
-	//printf("magn gen/loss: %f/%f\n", e->dna[PARAM_A0_AGEN], losmag);
 }
 
 
@@ -238,65 +237,124 @@ void convolver_evaluate_cube(Convolver *cnv, int cID, int mID) {
 	printf("evaluating on ref cube %05i...\n", cID);
 	#endif
 
-	Cube *cube = cnv->refs + cID;
+	Cube *cube = &cnv->refs[cID];
 
 	// set the grids
 	convolver_reset(cnv, cube); // clear grids
 	convolver_makeP(cnv, cube); // initialize
-	cpu_Q_sum(cnv, cube); // normalize the total charge -- is it necessary?
+	convolver_makeVNN(cnv, cube);
 
-	// copy the parameters to gpu constant memory -- no! the parameters should already be there!
+	//cpu_Q_sum(cnv, cube); // normalize the total charge -- is it necessary?
+
 	
-	// generate the initial field
-	cpu_A0_propagate(cnv, cube);
-	//cube_debug_print(cube, cnv->d_A0, "A0_0.bin");
-
-	int converged = 0;
+	number deltaq, conv;
 	int repo = 0;
-	while(converged == 0 && repo < MAXREPOS) {
-		cpu_A0_propagate(cnv, cube);
-		converged = cpu_Q_propagate(cnv, cube);
+	while(conv >= cnv->dqTolerance && repo < cube->maxside * 100) {
 
-		if(repo % 1 == 0)
-			cpu_Q_sum(cnv, cube);
+		for(int i=0; i<10; ++i)
+			cpu_Vee_propagate(cnv, cube);
+
+		deltaq = cpu_Q_propagate(cnv, cube, (repo % 10 == 0));
+		if(repo % 10 == 0) conv = deltaq;
+
 		repo++;
 	}
-
-
-	#ifdef DEBUGPRINT
-	sprintf(fname, "A0_%i_%05i_%05i.bin", repo,mID,cID);
-	//cube_debug_print(cnv->refs, cnv->d_A0, fname);
-	sprintf(fname, "Q_%i_%05i_%05i.bin", repo,mID,cID);
-	//cube_debug_print(cnv->refs, cnv->d_Q, fname);
-	#endif
 
 	// compute fitness on this cube
 	number mismatch = cpu_Q_diff(cnv, cube);
 	#ifdef DEBUGPRINT
+
+	sprintf(fname, "Q_final_%05i_%05i.bin", mID,cID);
+	cube_debug_print(cnv, cube, cnv->d_Q, fname);
+
 	printf("mismatch %e\n",mismatch);
+	assert(1 == 0);
 	#endif
 	// accumulate
-	cnv->population[mID].fitness += mismatch;
+	cnv->population[mID].fitness -= mismatch;
+}
+
+void convolver_evaluate_cube_alt(Convolver *cnv, int cID, int mID) {
+
+	Cube *cube = &cnv->refs[cID];
+
+	#ifdef DEBUGPRINT
+	char fname[64];
+	printf("evaluating on ref CUBE %i... [%i %i %i]\n", cID, cube->gridSize.x, cube->gridSize.y, cube->gridSize.z);
+	#endif
+
+
+	// set the grids
+	convolver_reset(cnv, cube); // clear grids
+	convolver_makeP(cnv, cube); // initialize
+
+	// copy the correct Q into GPU and update the PmQ
+	convolver_makePmQ(cnv, cube);
+
+	#ifdef DEBUGPRINT
+
+	sprintf(fname, "Q_%05i_%05i.bin",mID,cID);
+	cube_debug_print(cnv,cube, cnv->d_Q, fname);
+
+	#endif
+
+	// converge the A0 field
+	int converged = 0;
+	int repo = 0;
+	number dA0;
+	/*while(converged == 0 || repo < cube->maxside) {
+		dA0 = cpu_A0_propagate_tally(cnv, cube);
+		converged = dA0 < 0.0391f;
+		repo++;
+		if(repo == cube->maxside * 10) {
+			printf("A0 iteration limit\n");
+			break;
+		}
+	}
+	*/
+
+	for(repo=0; repo < 50000; repo++) {
+
+		//sprintf(fname, "A0_%i_%05i_%05i.bin", repo,mID,cID);
+		//cube_debug_print(cnv->refs, cnv->d_A0, fname);
+
+		cpu_A0_propagate(cnv, cube);
+		
+		if(repo % 10000 == 0) {
+			dA0 = cpu_A0_propagate_tally(cnv, cube);
+			printf("dA0 = %15.8e\n", dA0);
+			//sprintf(fname, "A0_%i_%05i_%05i.bin", mID,cID,repo/10000);
+			//cube_debug_print(cube, cnv->d_A0, fname);
+		}
+	}
+	dA0 = cpu_A0_propagate_tally(cnv, cube);
+	printf("dA0 last = %15.8e\n", dA0);
 }
 
 
 void convolver_evaluate_model(Convolver *cnv, int mID) {
 
 	#ifdef DEBUGPRINT
-	printf("evaluating element %05i...\n", mID);
+	printf("evaluating ELEMENT %i...\n", mID);
 	#endif
 
 	// load the model parameters to gpu cmem
 	cudaMemcpyToSymbol(c_parameters, cnv->population[mID].dna, sizeof(number) * DNASIZE, 0, cudaMemcpyHostToDevice);
 
+	printf("DNA: ");
+	for (int i = 0; i < DNASIZE; ++i) {
+		printf("%f\t", cnv->population[mID].dna[i]);
+	}
+	printf("\n");
 
 	// reset fitness
 	cnv->population[mID].fitness = 0;
 
-	// loop over all the refs
+	// loop over all the ref cubes
 	for(int cID=0; cID<cnv->nrefs; cID++) {
 
-		convolver_evaluate_cube(cnv, cID, mID);
+		if(cnv->alt == 0) convolver_evaluate_cube(cnv, cID, mID);
+		else convolver_evaluate_cube_alt(cnv, cID, mID);
 
 	}
 }
@@ -408,8 +466,8 @@ void convolver_evolve(Convolver *cnv) {
 	for(int i=0; i<cnv->populationSize; i++) {
 
 		printf("selecting %05i \n", i);
-		Element *o = cnv->offspring + i;
-		o->dna = cnv->dna2 + DNASIZE * i;
+		Element *o = &cnv->offspring[i];
+		o->dna = &cnv->dna2[DNASIZE * i];
 		o->fitness = 0;
 
 		if(i<cnv->keepers) {
@@ -460,6 +518,90 @@ void convolver_evolve(Convolver *cnv) {
 }
 
 
+
+
+void asd(Convolver *cnv, int cID, int mID) {
+
+	char fname[128];
+	Cube *cube = &cnv->refs[cID];
+
+	// load the model parameters to gpu cmem
+	cudaMemcpyToSymbol(c_parameters, cnv->population[mID].dna, sizeof(number) * DNASIZE, 0, cudaMemcpyHostToDevice);
+
+
+	// set the grids
+	convolver_reset(cnv, cube); // clear grids
+	convolver_makeP(cnv, cube); // initialize P and Q
+	convolver_makeVNN(cnv, cube);
+
+
+	// copy the solution
+	//cudaMemcpy(cnv->d_Q, cube->Q, sizeof(number) * cube->npts, cudaMemcpyHostToDevice);
+
+	cpu_Q_sum(cnv, cube); // normalize the total charge -- is it necessary?
+
+	// copy the parameters to gpu constant memory -- no! the parameters should already be there!
+	
+	// generate the initial field
+	cube_debug_print(cnv, cube, cnv->d_A0, "VNN.bin");
+
+
+	number converged = 0;
+	int repo = 0;
+	int printN = 1000;
+
+	// first relax the Vee using the correct solution
+
+	// then try to evolve the density... train so that there will be no more diffusion
+
+
+	// try the full thing to see where it goes
+
+	while(repo < 10*printN) {
+		
+		for(int k=0;k<50;k++)
+			cpu_Vee_propagate(cnv, cube);
+		
+		converged = cpu_Q_propagate(cnv, cube, 0);
+
+		if(repo % 10 == 0)
+			cpu_Q_sum(cnv, cube);
+		
+		
+		if(repo % printN == 0) {
+			printf("%15.8e\n", converged);
+			sprintf(fname, "Q_%05i_%05i_%05i.bin", repo/printN,mID,cID);
+			cube_debug_print(cnv, cube, cnv->d_Q, fname);
+			sprintf(fname, "V_%05i_%05i_%05i.bin", repo/printN,mID,cID);
+			cube_debug_print(cnv, cube, cnv->d_Ve, fname);
+		}
+
+		repo++;
+	}
+
+	/*
+	repo = 0;
+	printN = 1;
+	while(repo < 10*printN) {
+
+		cpu_Vee_propagate(cnv, cube);
+		converged = cpu_Q_propagate(cnv, cube);
+
+		if(repo % 10 == 0)
+			cpu_Q_sum(cnv, cube);
+
+		if(repo % printN == 0) {
+			printf("%15.8e\n", converged);
+			sprintf(fname, "Q_%05i_%05i_%05i.bin", repo/printN,mID,cID);
+			cube_debug_print(cnv, cube, cnv->d_Q, fname);
+			sprintf(fname, "V_%05i_%05i_%05i.bin", repo/printN,mID,cID);
+			cube_debug_print(cnv, cube, cnv->d_Ve, fname);
+		}
+
+		repo++;
+	}
+	*/
+}
 
 
 

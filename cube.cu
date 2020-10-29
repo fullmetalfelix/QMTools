@@ -84,6 +84,10 @@ void cube_load_reference(Cube *cube, const char *filename) {
 	cube->npts = cube->gridSize.x * cube->gridSize.y * cube->gridSize.z;
 	printf("grid shape: [%i %i %i]\n", cube->gridSize.x, cube->gridSize.y, cube->gridSize.z);
 
+	cube->maxside = cube->gridSize.x;
+	if(cube->gridSize.y > cube->maxside) cube->maxside = cube->gridSize.y;
+	if(cube->gridSize.z > cube->maxside) cube->maxside = cube->gridSize.z;
+
 
 	cube->gpu_grid.x = cube->gridSize.x / 8;
 	cube->gpu_grid.y = cube->gridSize.y / 8;
@@ -161,10 +165,11 @@ void cube_load_reference_dummy(Cube *cube) {
 }
 
 
-void cube_debug_print(Cube *ref, number *gpusrc, const char *filename) {
+void cube_debug_print(Convolver *cnv, Cube *ref, number *gpusrc, const char *filename) {
 
 	number *dst = (number*)malloc(sizeof(number) * ref->npts);
-	cudaMemcpy(dst, gpusrc, sizeof(number) * ref->npts, cudaMemcpyDeviceToHost);
+	cpu_cube_unwrap(cnv, ref, gpusrc, cnv->d_A0n);
+	cudaMemcpy(dst, cnv->d_A0n, sizeof(number) * ref->npts, cudaMemcpyDeviceToHost);
 	
 	unsigned int gpub = 8;
 

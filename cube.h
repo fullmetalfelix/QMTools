@@ -23,6 +23,7 @@ struct Cube {
 
 	/// Number of voxels in a cube.
 	unsigned int npts;
+	unsigned int maxside;
 
 	number *Q;
 	number *d_Q;
@@ -32,7 +33,7 @@ struct Cube {
 
 void cube_load_reference(Cube *cube, const char *filename);
 void cube_load_reference_dummy(Cube *cube);
-void cube_debug_print(Cube *ref, number *gpusrc, const char *filename);
+void cube_debug_print(Convolver *cnv, Cube *ref, number *gpusrc, const char *filename);
 
 
 
