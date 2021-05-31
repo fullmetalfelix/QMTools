@@ -521,24 +521,24 @@ class QMTools(Structure):
 		#print(self.qube, numpy.max(self.qube))
 
 
-	def ComputeDensity(molecule, grid):
+	def ComputeDensity(self, molecule, grid):
 
 		lib.qm_densityqube(byref(molecule), byref(grid))
 		return numpy.copy(grid._qube)
 
-	def ComputeDensity_subgrid(molecule, grid):
+	def ComputeDensity_subgrid(self, molecule, grid):
 
 		lib.qm_densityqube_subgrid(byref(molecule), byref(grid))
 		return numpy.copy(grid._qube)
 
 	
-	def ComputeDensity_shmem(molecule, grid):
+	def ComputeDensity_shmem(self, molecule, grid):
 
 		lib.qm_densityqube_shmem(byref(molecule), byref(grid))
 		return numpy.copy(grid._qube)
 	
 
-	def WriteDensity(molecule, grid, filename):
+	def WriteDensity(self, molecule, grid, filename):
 
 		# create byte objects from the strings
 		b_string = c_char_p(filename.encode('utf-8'))
@@ -547,7 +547,7 @@ class QMTools(Structure):
 		lib.qm_gridmol_write(byref(grid), byref(molecule), b_string)
 
 
-	def ComputeHartree(molecule, densitygrid, grid):
+	def ComputeHartree(self, molecule, densitygrid, grid):
 
 		lib.qm_hartree(byref(molecule), byref(densitygrid), byref(grid))
 		return numpy.copy(grid._qube)

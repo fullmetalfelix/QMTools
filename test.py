@@ -5,7 +5,7 @@ from ctypes import c_float
 import time
 
 
-
+# create a calculator object
 calculator = QMTools()
 basisset = BasisSet("cc-pvdz.bin")
 
@@ -13,11 +13,15 @@ basisset = BasisSet("cc-pvdz.bin")
 # load the molecule
 folder = "./molecule_29766_0/"
 mol = Molecule(folder+"GEOM-B3LYP.xyz", folder+"D-CCSD.npy", basisset)
+# the xyz must contain atomic coordinates in ANGSTROM
 
 
 
-
-egrid = Grid.DensityGrid(mol, 0.025, 3.0)
+# create a grid for the density
+# mol: the molecule
+# 0.1: grid step in ANGSTROM
+# 3.0: 'fat' empty space around the molecule in ANGSTROM
+egrid = Grid.DensityGrid(mol, 0.1, 3.0)
 print(egrid)
 
 #vgrid = Grid.MakeGrid([-8,-8,0], 0.1, [160, 160, 64])
