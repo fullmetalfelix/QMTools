@@ -12,7 +12,7 @@ make
 get an interactive session:
 
 ```
-sinteractive -t 10 --gres-gpu:...
+sinteractive -t 10 --gres=gpu:teslap100:1 --mem-per-cpu=2000
 module load anaconda3 cuda
 
 python test.py
