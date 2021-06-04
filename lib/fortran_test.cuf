@@ -1,0 +1,58 @@
+module fortran_module
+    use :: iso_c_binding
+    use cufft
+    use cudafor
+    implicit none
+
+contains
+
+integer function fortran_test() bind(c, name='fortran_test')
+    implicit none
+    integer::i=2
+    fortran_test=i
+end function
+
+integer function fft_test() bind(c, name='fft_test')
+    implicit none
+    integer::i=2
+    integer, parameter :: m=768, n=512
+    complex, managed :: a(m,n),b(m,n)
+    real, managed :: ar(m,n),br(m,n)
+    real    x
+    integer plan, ierr
+    logical passing
+    
+    fft_test=m
+    a = 1; ar = 1
+
+    ierr = cufftPlan2D(plan,m,n,CUFFT_C2C)
+    ierr = ierr + cufftExecC2C(plan,a,b,CUFFT_FORWARD)
+    ierr = ierr + cufftExecC2C(plan,b,b,CUFFT_INVERSE)
+    ierr = ierr + cudaDeviceSynchronize()
+    x = maxval(abs(a-b/(m*n)))
+    !write(*,*) 'Max error C2C: ', x
+    passing = x .le. 1.0e-5
+
+    ierr = ierr + cufftPlan2D(plan,m,n,CUFFT_R2C)
+    ierr = ierr + cufftExecR2C(plan,ar,b)
+    ierr = ierr + cufftPlan2D(plan,m,n,CUFFT_C2R)
+    ierr = ierr + cufftExecC2R(plan,b,br)
+    ierr = ierr + cudaDeviceSynchronize()
+    x = maxval(abs(ar-br/(m*n)))
+    !write(*,*) 'Max error R2C/C2R: ', x
+    passing = passing .and. (x .le. 1.0e-5)
+
+    ierr = ierr + cufftDestroy(plan)
+    !print *,ierr
+    passing = passing .and. (ierr .eq. 0)
+    if (passing) then
+        !print *,"Test PASSED"
+        fft_test=1
+    else
+        !print *,"Test FAILED"
+        fft_test=0
+    endif
+end function
+
+end module
+  

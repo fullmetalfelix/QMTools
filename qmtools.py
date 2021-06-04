@@ -552,6 +552,15 @@ class QMTools(Structure):
 		lib.qm_hartree(byref(molecule), byref(densitygrid), byref(grid))
 		return numpy.copy(grid._qube)
 
+	def fortran_test(self):
+
+		print(lib.fortran_test())
+
+	def fft_test(self):	
+			
+		print(lib.fft_test())
+
+
 
 
 QMTools_p = POINTER(QMTools)
