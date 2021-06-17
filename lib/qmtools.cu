@@ -26,6 +26,7 @@ int types[] = {1,6,7,8,9,14,15,16,17,35};
 __constant__ int c_types[NTYPES];
 
 
+//Initialization of QMTools, copy types to device memory
 void qm_ini(QMTools *obj) {
 
 	printf("ntypes: %i\n", NTYPES);
@@ -44,7 +45,7 @@ void qm_del(QMTools *obj) {
 }
 
 
-
+//Initialization of Grid variables, copy qube and variables npts and nfields to device memory
 
 void qm_grid_ini(Grid *g) {
 
@@ -59,6 +60,7 @@ void qm_grid_del(Grid *obj) {
 }
 
 
+//Write Grid and Molecule variables to .bin file
 
 void qm_gridmol_write(Grid *g, Molecule *m, const char* filename) {
 
@@ -78,6 +80,7 @@ void qm_gridmol_write(Grid *g, Molecule *m, const char* filename) {
 }
 
 
+//???
 
  SCSFGPU* scsf_gpu_allocate(QMTools *obj, Molecule *m) {
 

@@ -1,0 +1,63 @@
+module ftypes
+    use iso_c_binding
+    use cufft
+    use cudafor
+
+    real(c_float), parameter :: R_BOHR = 0.529772, & ! Bohr-radius in angstroms
+    HARTREE = 27.211386245, & ! eV
+    COULOMB_CONST = 14.399644, & ! [eV*Ang/e^2]
+    EPS0 = 0.0055263494, & ! e/(V*Ang)
+    PI = 4.0*atan(1.0) ! Pi
+
+    !C types: float3, BasisSet, Grid and Molecule
+    TYPE, BIND(C) :: float3
+        real(c_float) :: x, y, z
+    END TYPE
+
+    TYPE, BIND(C) :: BasisSet
+        type(c_ptr) :: atomOffset, nshells, &
+                        Ls, shellOffset
+        integer(c_int) :: nparams
+        type(c_ptr) :: alphas, coeffs
+        type(c_ptr) :: global_m_values
+        type(c_ptr), managed :: d_alphas, d_coeffs
+    END TYPE
+
+    TYPE, BIND(C) :: Grid
+        type(dim3) :: shape
+        type(dim3) :: GPUblocks
+        integer(c_int) :: npts, nfields
+        type(float3) :: origin, Ax, Ay, Az
+        real(c_float) :: step
+        type(c_ptr), managed :: qube, d_qube
+    END TYPE
+
+    TYPE, BIND(C) :: Molecule
+        integer(c_int) :: natoms
+        type(c_ptr) :: types
+        type(c_ptr) :: coords
+
+        integer(c_int) :: qtot, norbs
+
+        type(c_ptr) :: dm
+        type(c_ptr), managed :: d_dm
+        type(c_ptr) :: ALMOs
+        type(c_ptr), managed :: d_ALMOs
+
+        type(BasisSet) :: basisset
+
+        type(c_ptr), managed :: d_types
+        type(c_ptr), managed :: d_coords
+    END TYPE
+
+    !Type for converting Grid with C pointers to one with Fortran pointers
+    TYPE, BIND(C) :: fGrid
+        type(dim3) :: shape
+        type(dim3) :: GPUblocks
+        integer(c_int) :: npts, nfields
+        type(float3) :: origin, Ax, Ay, Az
+        real(c_float) :: step
+        real, pointer, managed :: qube(:), d_qube(:)
+    END TYPE
+
+end module

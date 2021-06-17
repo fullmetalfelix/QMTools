@@ -107,7 +107,4 @@ extern "C" void qm_gridmol_write(Grid *g, Molecule *m, const char* filename);
 
 
 
-
-
-
 #endif

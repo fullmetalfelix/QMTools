@@ -42,18 +42,16 @@ print(grid._qube[0,0,1])
 '''
 
 density = calculator.ComputeDensity(mol, egrid)
-calculator.WriteDensity(mol, egrid, "density_0.025.bin")
+#calculator.WriteDensity(mol, egrid, "density_0.025.bin")
 
 print()
-calculator.fortran_test()
-calculator.fft_test()
+calculator.poisson_fft(mol, egrid)
 
 #density = calculator.ComputeDensity_subgrid(mol, egrid)
 #calculator.WriteDensity(mol, egrid, "density_0.1_sg4.bin")
 
 #hartree = calculator.ComputeHartree(mol, egrid, vgrid)
 #calculator.WriteDensity(mol, vgrid, "hartree.bin")
-
 
 del mol
 del calculator

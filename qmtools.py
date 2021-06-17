@@ -552,13 +552,26 @@ class QMTools(Structure):
 		lib.qm_hartree(byref(molecule), byref(densitygrid), byref(grid))
 		return numpy.copy(grid._qube)
 
-	def fortran_test(self):
 
-		print(lib.fortran_test())
+	def poisson_fft(self, mol,  grid, omega2=[]):
+		grid_vec = numpy.array([
+            [0.1, 0.0, 0.0],
+            [0.0, 0.1, 0.0],
+            [0.0, 0.0, 0.1]
+        ])
+		grid_origin=(grid.origin.x, grid.origin.y, grid.origin.z)
+		grid_shape=(grid.shape.x,grid.shape.y,grid.shape.z)
+		scan_window=(
+        	grid_origin,
+        	tuple([grid_origin[i] + grid_vec[i][i]*grid_shape[i] for i in range(3)])
+    	)
+		ndim = 3
+		L = [scan_window[1][i]-scan_window[0][i] for i in range(ndim )]
+		N = (120, 120, 64)
+		omega2 = [-(2*numpy.pi*numpy.fft.fftfreq(N[i], L[i]/N[i])) ** 2 for i in range(ndim)]
+		omega2 = numpy.ravel(numpy.stack(numpy.meshgrid(*omega2, indexing='ij'), axis=-1).sum(axis=-1).astype(numpy.float32), order='F')
 
-	def fft_test(self):	
-			
-		print(lib.fft_test())
+		lib.poisson_fft(byref(mol), byref(grid), omega2.ctypes.data_as(POINTER(c_float)))
 
 
 
@@ -573,6 +586,8 @@ lib.qm_densityqube_shmem.argtypes = [Molecule_p, Grid_p]
 lib.qm_hartree.argtypes = [Molecule_p, Grid_p, Grid_p]
 lib.qm_gridmol_write.argtypes = [Grid_p, Molecule_p, c_char_p]
 
+lib.poisson_fft.argtypes = [Molecule_p, Grid_p, POINTER(c_float)]
+#lib.DQ_sum.argtypes = [Molecule_p, Grid_p]
 
 
 
