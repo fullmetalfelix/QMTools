@@ -21,7 +21,7 @@ mol = Molecule(folder+"GEOM-B3LYP.xyz", folder+"D-CCSD.npy", basisset)
 # mol: the molecule
 # 0.1: grid step in ANGSTROM
 # 3.0: 'fat' empty space around the molecule in ANGSTROM
-egrid = Grid.DensityGrid(mol, 0.1, 3.0)
+egrid = Grid.DensityGrid(mol, 0.1, 3.0) #original was mol, 0.1, 3.0
 print(egrid)
 
 #vgrid = Grid.MakeGrid([-8,-8,0], 0.1, [160, 160, 64])
@@ -46,6 +46,8 @@ density = calculator.ComputeDensity(mol, egrid)
 
 print()
 calculator.poisson_fft(mol, egrid)
+#numpy.savetxt('pot_hart.out',calculator.ComputeHartree(mol, egrid, egrid))
+
 
 #density = calculator.ComputeDensity_subgrid(mol, egrid)
 #calculator.WriteDensity(mol, egrid, "density_0.1_sg4.bin")

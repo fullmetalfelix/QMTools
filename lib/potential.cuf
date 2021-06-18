@@ -121,9 +121,9 @@ subroutine CQ_sum (mol, egrid, arr_out) BIND(C)
         do ix=1, egrid%shape%x
             do iy=1, egrid%shape%y
                 do iz=1, egrid%shape%z
-                    dr(ix,iy,iz,at) = sqrt(((ix-1)*step + Ax - mol_coords(at,1))**2 &
-                                        + ((iy-1)*step + Ay - mol_coords(at,2))**2 &
-                                        + ((iz-1)*step + Az - mol_coords(at,3))**2)
+                    dr(ix,iy,iz,at) = sqrt(((ix-1)*step + Ax - mol_coords(at,1)+0.5*step)**2 &
+                                        + ((iy-1)*step + Ay - mol_coords(at,2)+0.5*step)**2 &
+                                        + ((iz-1)*step + Az - mol_coords(at,3)+0.5*step)**2)
                 end do
             end do
         end do         
@@ -180,8 +180,10 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
     inFFT_3d = -inFFT_3d*1/EPS0
     k_3d = reshape(k_p, [g%shape%x, g%shape%y, g%shape%z])
 
+    print*, "FFT input:", inFFT_3d(:10,1,1)
+
     !Forward FFT
-    ierr = cufftPlan3D(plan, g%shape%z, g%shape%x, g%shape%y,  CUFFT_C2C)
+    ierr = cufftPlan3D(plan, g%shape%z, g%shape%y, g%shape%x,  CUFFT_C2C)
     ierr = cufftExecC2C(plan, inFFT_3d, outFFT_3d, CUFFT_FORWARD)
     ierr = cudaDeviceSynchronize()
     if(ierr/=0) then
@@ -201,6 +203,8 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
         end do
     end do
 
+    print*, "After poisson:", outFFT_3d(:10,1,1)
+
     !Inverse FFT
     ierr = cufftExecC2C(plan, outFFT_3d, outFFT_3d, CUFFT_INVERSE)
     ierr = cudaDeviceSynchronize()
@@ -209,6 +213,8 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
     if(ierr/=0) then
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during inverse FFT"
     end if
+
+    print*, "After inverse:", outFFT_3d(:10,1,1)
 
     !Save/edit data
     call write_3Darr(1/real(g%npts)*real(outFFT_3d))
