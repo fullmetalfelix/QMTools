@@ -51,11 +51,12 @@ module potential
             real(c_float), allocatable :: rho_tot(:,:,:), rho_n(:,:,:), rho_e(:,:,:), dr(:,:,:,:)
         end subroutine        
 
-        subroutine write_3Darr (arr_in)
+        subroutine write_3Darr (arr_in, s_x, s_y, s_z)
             use iso_c_binding
             implicit none
             integer:: i, j, k, ios
-            real(c_float), intent(in) :: arr_in(120,120,64)
+            integer, intent(in) :: s_x, s_y, s_z
+            real(c_float), intent(in) :: arr_in(s_x, s_y, s_z)
         end subroutine write_3Darr
 
     END INTERFACE
@@ -203,6 +204,7 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
         end do
     end do
 
+
     print*, "After poisson:", outFFT_3d(:10,1,1)
 
     !Inverse FFT
@@ -214,19 +216,25 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during inverse FFT"
     end if
 
-    print*, "After inverse:", outFFT_3d(:10,1,1)
+    print*, "After inverse:", real(outFFT_3d(1,1,:10))
+
+    print*
+
+    print*, "Step:", g%step
 
     !Save/edit data
-    call write_3Darr(1/real(g%npts)*real(outFFT_3d))
+    call write_3Darr(1/real(g%npts)*real(outFFT_3d), g%shape%x, g%shape%y, g%shape%z)
 
 end subroutine
 
+
 !Write a 3D array to .dat file
-subroutine write_3Darr(arr_in)
+subroutine write_3Darr(arr_in, s_x, s_y, s_z)
     use iso_c_binding
     implicit none
     integer:: i, j, k, ios
-    real(c_float), intent(in) :: arr_in(120,120,64)
+    integer, intent(in) :: s_x, s_y, s_z
+    real(c_float), intent(in) :: arr_in(s_x, s_y, s_z)
 
     !Remove old file, without this unnecessary fort.1 files are created
     open(unit=1, file="pot_cuda.dat", iostat=ios, status="replace")
@@ -235,9 +243,9 @@ subroutine write_3Darr(arr_in)
     open(unit=1, file="pot_cuda.dat", iostat=ios, status="new", position="append")
     write(1,*) 'Comment'
     write(1,*) 'Comment'
-    do i=1, 120
-        do j=1, 120
-            do k=1, 64
+    do i=1, s_x
+        do j=1, s_y
+            do k=1, s_z
                 if(mod(k-1,6)==5) then
                     write(1,'(1X, F15.5)') real(arr_in(i, j, k))!write(1,'(F20.3)', advance='yes') real(arr_in(i, j, k))
                 else

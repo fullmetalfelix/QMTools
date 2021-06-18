@@ -567,7 +567,7 @@ class QMTools(Structure):
     	)
 		ndim = 3
 		L = [scan_window[1][i]-scan_window[0][i] for i in range(ndim )]
-		N = (120, 120, 64)
+		N = (grid.shape.x,grid.shape.y,grid.shape.z)
 		omega2 = [-(2*numpy.pi*numpy.fft.fftfreq(N[i], L[i]/N[i])) ** 2 for i in range(ndim)]
 		omega2 = numpy.ravel(numpy.stack(numpy.meshgrid(*omega2, indexing='ij'), axis=-1).sum(axis=-1).astype(numpy.float32), order='F')
 
