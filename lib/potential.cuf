@@ -41,7 +41,7 @@ module potential
             implicit none
             type(Molecule), intent(in) :: mol 
             type(Grid), intent(in) :: egrid
-            real(c_float), dimension(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
+            complex(c_float), dimension(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
                 intent(out) :: arr_out
             real, pointer :: fqube(:), coords(:)
             integer, pointer :: Z(:)
@@ -51,13 +51,18 @@ module potential
             real(c_float), allocatable :: rho_tot(:,:,:), rho_n(:,:,:), rho_e(:,:,:), dr(:,:,:,:)
         end subroutine        
 
-        subroutine write_3Darr (arr_in, s_x, s_y, s_z)
+        subroutine write_cube(arr_in, fgrid_in, mol)
             use iso_c_binding
+            use ftypes
             implicit none
             integer:: i, j, k, ios
-            integer, intent(in) :: s_x, s_y, s_z
-            real(c_float), intent(in) :: arr_in(s_x, s_y, s_z)
-        end subroutine write_3Darr
+            type(fgrid), intent(in) :: fgrid_in
+            type(molecule), intent(in) :: mol
+            real(c_float), intent(in) :: arr_in(fgrid_in%shape%x, fgrid_in%shape%y, fgrid_in%shape%z)
+            integer, pointer :: Z(:)
+            real, pointer :: coords(:)
+            real(c_float) :: mol_coords(mol%natoms, 3)
+        end subroutine write_cube
 
     END INTERFACE
 
@@ -149,6 +154,7 @@ subroutine CQ_sum (mol, egrid, arr_out) BIND(C)
 
 end subroutine
 
+
 !3D FFT solution of Poisson eq. wrt. Coulombs potential from
 !charge density of a molecule. grid_in should include the electron density, and
 !k is actually k^2 that is calculated in python as 1D C pointer.
@@ -163,6 +169,7 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
     type(c_ptr), intent(in), value :: k
     type(fGrid), managed :: g
     real, pointer :: k_p(:)
+    real :: start, finish
 
     integer :: plan, ierr, ix, iy, iz
     real(c_float), allocatable, managed :: k_3d(:,:,:)
@@ -181,12 +188,15 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
     inFFT_3d = -inFFT_3d*1/EPS0
     k_3d = reshape(k_p, [g%shape%x, g%shape%y, g%shape%z])
 
-    print*, "FFT input:", inFFT_3d(:10,1,1)
+    print*, "Solving for potential"
+
+    call cpu_time(start)
 
     !Forward FFT
     ierr = cufftPlan3D(plan, g%shape%z, g%shape%y, g%shape%x,  CUFFT_C2C)
     ierr = cufftExecC2C(plan, inFFT_3d, outFFT_3d, CUFFT_FORWARD)
     ierr = cudaDeviceSynchronize()
+
     if(ierr/=0) then
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during forward FFT"
     end if
@@ -204,50 +214,65 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
         end do
     end do
 
-
-    print*, "After poisson:", outFFT_3d(:10,1,1)
-
     !Inverse FFT
     ierr = cufftExecC2C(plan, outFFT_3d, outFFT_3d, CUFFT_INVERSE)
     ierr = cudaDeviceSynchronize()
     ierr = cufftDestroy(plan)
 
+    call cpu_time(finish)
+
     if(ierr/=0) then
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during inverse FFT"
     end if
 
-    print*, "After inverse:", real(outFFT_3d(1,1,:10))
-
-    print*
-
-    print*, "Step:", g%step
+    print*, "Solution finished. Time:", finish-start
 
     !Save/edit data
-    call write_3Darr(1/real(g%npts)*real(outFFT_3d), g%shape%x, g%shape%y, g%shape%z)
+    call write_cube(1/real(g%npts)*real(outFFT_3d), g, mol)
 
 end subroutine
 
 
-!Write a 3D array to .dat file
-subroutine write_3Darr(arr_in, s_x, s_y, s_z)
+!Write a 3D array to .cube file, pretty clunky
+subroutine write_cube(arr_in, fgrid_in, mol)
     use iso_c_binding
+    use ftypes
     implicit none
     integer:: i, j, k, ios
-    integer, intent(in) :: s_x, s_y, s_z
-    real(c_float), intent(in) :: arr_in(s_x, s_y, s_z)
+    type(fgrid), intent(in) :: fgrid_in
+    type(molecule), intent(in) :: mol
+    real(c_float), intent(in) :: arr_in(fgrid_in%shape%x, fgrid_in%shape%y, fgrid_in%shape%z)
+    integer, pointer :: Z(:)
+    real, pointer :: coords(:)
+    real(c_float) :: mol_coords(mol%natoms, 3)
 
     !Remove old file, without this unnecessary fort.1 files are created
-    open(unit=1, file="pot_cuda.dat", iostat=ios, status="replace")
+    open(unit=1, file="pot_cuda.cube", iostat=ios, status="replace")
     if (ios==0) close(1, status="delete")
 
-    open(unit=1, file="pot_cuda.dat", iostat=ios, status="new", position="append")
-    write(1,*) 'Comment'
-    write(1,*) 'Comment'
-    do i=1, s_x
-        do j=1, s_y
-            do k=1, s_z
+    call c_f_pointer(mol%coords, coords, [mol%natoms*3])
+    call c_f_pointer(mol%types, Z, [mol%natoms])
+    mol_coords = transpose(reshape(coords, [3, mol%natoms]))
+
+    open(unit=1, file="pot_cuda.cube", iostat=ios, status="new", position="append")
+
+    !Header
+    write(1,*) 'Comment line'
+    write(1,*) 'Comment line'
+    write(1,*) mol%natoms, fgrid_in%origin%x, fgrid_in%origin%y, fgrid_in%origin%Z
+    write(1,*) fgrid_in%shape%x, fgrid_in%step, 0.0, 0.0
+    write(1,*) fgrid_in%shape%y, 0.0, fgrid_in%step, 0.0
+    write(1,*) fgrid_in%shape%z, 0.0, 0.0, fgrid_in%step
+    do i=1, mol%natoms
+        write(1,*) Z(i), 0.0, mol_coords(i,1), mol_coords(i,2), mol_coords(i, 3)
+    end do
+
+    !Volumetric
+    do i=1, fgrid_in%shape%x
+        do j=1, fgrid_in%shape%y
+            do k=1, fgrid_in%shape%z
                 if(mod(k-1,6)==5) then
-                    write(1,'(1X, F15.5)') real(arr_in(i, j, k))!write(1,'(F20.3)', advance='yes') real(arr_in(i, j, k))
+                    write(1,'(1X, F15.5)') real(arr_in(i, j, k))
                 else
                     write(1,'(F15.5)', advance='no') real(arr_in(i, j, k))
                 end if
@@ -256,7 +281,7 @@ subroutine write_3Darr(arr_in, s_x, s_y, s_z)
         end do
     end do
     close(1)
-end subroutine write_3Darr
+end subroutine write_cube
 
 end module
   
