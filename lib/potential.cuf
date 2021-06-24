@@ -3,9 +3,8 @@ module potential
     use cufft
     use cudafor
     use ftypes
-    use iso_fortran_env
-    implicit none
     
+    !Interface for subroutines, variables are explained in their subroutines.
     INTERFACE
 
         SUBROUTINE grid_to_fgrid (grid_in, fgrid_out) BIND(C)
@@ -17,7 +16,44 @@ module potential
             type(c_ptr) :: c_qube, cd_qube
         END SUBROUTINE grid_to_fgrid
 
-        subroutine poisson_fft (mol, grid_in, k) BIND(C)
+        attributes(global) subroutine cmdiv_kernel(A, B, N, M, L)
+            use cudafor
+            implicit none
+            complex :: A(:,:,:)
+            real :: B(:,:,:)
+            integer, value :: N, M, L
+            integer :: i, j, k
+        end subroutine
+
+        subroutine poisson_fft (mol, grid_in, k, target_size) BIND(C)
+            use iso_c_binding
+            use ftypes
+            use cufft
+            use cudafor
+            implicit none
+            ! Input and their Fortran pointers
+            type(Molecule), intent(in) :: mol 
+            type(grid), intent(in):: grid_in
+            type(c_ptr), intent(in), value :: k
+            type(c_ptr), intent(in), value :: target_size
+            type(fGrid) :: g
+            real, pointer :: k_p(:)
+            integer, pointer :: ts_p(:)
+        
+            ! GPU variables
+            complex, device, allocatable :: A_d(:,:,:)
+            real, device, allocatable :: B_d(:,:,:)
+            type(dim3) :: threads, blocks
+        
+            ! Temp. and FFT variables
+            real :: start, finish
+            integer :: plan, ierr, ix, iy, iz, sx, sy, sz, npts
+            real(c_float), allocatable :: k_3d(:,:,:) !maybe managed
+            complex(c_float), allocatable, managed ::  outFFT_3d(:,:,:), inFFT_3d(:,:,:)
+
+        end subroutine poisson_fft
+
+        subroutine padded_poisson(mol, grid_in, k) BIND(C, name='padded_poisson')
             use iso_c_binding
             use ftypes
             use cufft
@@ -28,27 +64,29 @@ module potential
             type(c_ptr), intent(in), value :: k
             type(fGrid), managed :: g
             real, pointer :: k_p(:)
+            real :: start, finish
         
             integer :: plan, ierr, ix, iy, iz
             real(c_float), allocatable, managed :: k_3d(:,:,:)
             complex(c_float), allocatable, managed ::  outFFT_3d(:,:,:), inFFT_3d(:,:,:)
-
-        end subroutine poisson_fft
-
-        subroutine CQ_sum (mol, egrid, arr_out) BIND(C)
+        end subroutine
+        
+        subroutine CQ_sum (mol, egrid, arr_out, N, M, L) BIND(C)
             use iso_c_binding
             use ftypes
             implicit none
             type(Molecule), intent(in) :: mol 
             type(Grid), intent(in) :: egrid
-            complex(c_float), dimension(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
+            integer, intent(in) :: N, M, L
+            complex(c_float), dimension(N, M, L), &
                 intent(out) :: arr_out
             real, pointer :: fqube(:), coords(:)
             integer, pointer :: Z(:)
         
             integer :: ix, iy, iz, at
             real(c_float) :: mol_coords(mol%natoms, 3), sigma, Ax, Ay, Az, step
-            real(c_float), allocatable :: rho_tot(:,:,:), rho_n(:,:,:), rho_e(:,:,:), dr(:,:,:,:)
+            real(c_float), allocatable :: rho_tot(:,:,:), rho_e(:,:,:), rho_n(:,:,:), dr(:,:,:,:), arr_sum(:,:,:)
+        
         end subroutine        
 
         subroutine write_cube(arr_in, fgrid_in, mol)
@@ -86,36 +124,41 @@ SUBROUTINE grid_to_fgrid (grid_in, fgrid_out) BIND(C)
 END SUBROUTINE
 
 !Sum the charge qubes of a molecule and its electron density grid
-subroutine CQ_sum (mol, egrid, arr_out) BIND(C)
+subroutine CQ_sum (mol, egrid, arr_out, N, M, L) BIND(C)
     use iso_c_binding
     use ftypes
     implicit none
     type(Molecule), intent(in) :: mol 
     type(Grid), intent(in) :: egrid
-    complex(c_float), dimension(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
+    integer, intent(in) :: N, M, L
+    complex(c_float), dimension(N, M, L), &
         intent(out) :: arr_out
     real, pointer :: fqube(:), coords(:)
     integer, pointer :: Z(:)
 
-    integer :: ix, iy, iz, at
-    real(c_float) :: mol_coords(mol%natoms, 3), sigma, Ax, Ay, Az, step
-    real(c_float), allocatable :: rho_tot(:,:,:), rho_n(:,:,:), rho_e(:,:,:), dr(:,:,:,:)
+    integer :: ix, iy, iz, at, chrg
+    real(c_float) :: mol_coords(mol%natoms, 3), sigma, Ax, Ay, Az, step, hstep
+    real(c_float), allocatable :: rho_tot(:,:,:), rho_e(:,:,:), rho_n(:,:,:), dr(:,:,:,:), arr_sum(:,:,:)
 
     !Variable initialization and C operabitility
-    allocate(rho_n(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
-    rho_tot(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
+    allocate(rho_n(N, M, L), &
+    rho_tot(N, M, L), &
     rho_e(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
-    dr(egrid%shape%x, egrid%shape%y, egrid%shape%z, mol%natoms))
+    dr(N, M, L, mol%natoms), &
+    arr_sum(egrid%shape%x, egrid%shape%y, egrid%shape%z))
 
-    rho_n = 0; sigma=0.05
+    rho_n = 0; sigma=0.05; arr_out=0; dr=0
 
     call c_f_pointer(egrid%qube, fqube, [egrid%npts])
     call c_f_pointer(mol%coords, coords, [mol%natoms*3])
     call c_f_pointer(mol%types, Z, [mol%natoms])
 
-    !r_grid contains each voxels distance to [0,0,0]
-    Ax = egrid%origin%x*R_BOHR; Ay = egrid%origin%y*R_BOHR; Az = egrid%origin%z*R_BOHR
     step = egrid%step*R_BOHR
+    hstep = 0.5*step
+
+    Ax = egrid%origin%x*R_BOHR-(N -egrid%shape%x)*hstep
+    Ay = egrid%origin%y*R_BOHR-(M -egrid%shape%y)*hstep
+    Az = egrid%origin%z*R_BOHR-(L -egrid%shape%z)*hstep
 
     !Nucleus' coordinates to array
     !First atoms x is (1,1), y is (1,2)...
@@ -124,88 +167,158 @@ subroutine CQ_sum (mol, egrid, arr_out) BIND(C)
     !dr includes each atoms distance to a voxel in ang
     !ex. dr(2,2,2,3) gives atom nro. 3 distance to vox' at (2,2,2)
     do at=1, mol%natoms
-        do ix=1, egrid%shape%x
-            do iy=1, egrid%shape%y
-                do iz=1, egrid%shape%z
-                    dr(ix,iy,iz,at) = sqrt(((ix-1)*step + Ax - mol_coords(at,1)+0.5*step)**2 &
-                                        + ((iy-1)*step + Ay - mol_coords(at,2)+0.5*step)**2 &
-                                        + ((iz-1)*step + Az - mol_coords(at,3)+0.5*step)**2)
+            do ix=1, N
+                do iy=1, M
+                    do iz=1, L
+                        dr(ix,iy,iz,at) = sqrt(((ix-1)*step + Ax - mol_coords(at,1)+hstep)**2 &
+                                            + ((iy-1)*step + Ay - mol_coords(at,2)+hstep)**2 &
+                                            + ((iz-1)*step + Az - mol_coords(at,3)+hstep)**2)
+                        end do
                 end do
-            end do
-        end do         
+            end do  
     end do
+
+    print*, "Total charge from file:", sum(Z)
 
     !Calculate charge density
     do at=1, mol%natoms
-        do ix=1, egrid%shape%x
-            do iy=1, egrid%shape%y
-                do iz=1, egrid%shape%z
-                    rho_n(ix,iy,iz) = rho_n(ix,iy,iz) + real(Z(at))/(sigma*sqrt(2*pi))**3*exp(-(dr(ix,iy,iz,at)**2)/(2*sigma**2))
+            do ix=1, N
+                do iy=1, M
+                   do iz=1, L
+                        rho_n(ix,iy,iz) = rho_n(ix,iy,iz) + real(Z(at))/((sigma*sqrt(2*pi))**3)*exp(-(dr(ix,iy,iz,at)**2)/(2*sigma**2))
+                    end do
                 end do
             end do
-        end do 
     end do
 
     !Reshape 1D electron density to 3D
     rho_e = -1/(0.1)**3*reshape(fqube, [egrid%shape%x, egrid%shape%y, egrid%shape%z])
 
+    arr_out(int((N-egrid%shape%x)*0.5)+1:int((N-egrid%shape%x)*0.5)+egrid%shape%x, &
+           int((M-egrid%shape%y)*0.5)+1:int((M-egrid%shape%y)*0.5)+egrid%shape%y, &
+           int((L-egrid%shape%z)*0.5)+1:int((L-egrid%shape%z)*0.5)+egrid%shape%z) &
+           = arr_out + rho_e
+
     !Sum and results
-    arr_out = rho_n + rho_e
+    arr_out = rho_n + arr_out
+
+    print*, "Total charge after spread:", sum(arr_out)*0.1**3
+
 
 end subroutine
 
+!Matrix division kernel code WIP
+attributes(global) subroutine cmdiv_kernel(A, B, N, M, L)
+    use cudafor
+    implicit none
+    complex :: A(:,:,:)
+    real :: B(:,:,:)
+    integer, value :: N, M, L
+    integer :: i, j, k
+ 
+    ! This thread computes C(i,j,k) =  A(i,j,k)/B(i,j,k)
+    i = (blockidx%x-1) * blockDim%x + threadidx%x
+    j = (blockidx%y-1) * blockDim%y + threadidx%y
+    k = (blockidx%z-1) * blockDim%z + threadidx%z
+
+
+    if (i<=N) then
+        if (j<=M) then
+            if (k<=L) then
+                if  (B(i,j,k)==0) then
+                    A(i,j,k) = 0
+                else
+                   A(i,j,k) = A(i,j,k)/B(i,j,k)
+                end if
+            end if
+        end if
+    end if
+
+end subroutine
 
 !3D FFT solution of Poisson eq. wrt. Coulombs potential from
 !charge density of a molecule. grid_in should include the electron density, and
-!k is actually k^2 that is calculated in python as 1D C pointer.
-subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
+!k is actually k^2 that is calculated in python as a 1D C pointer.
+subroutine poisson_fft(mol, grid_in, k, target_size) BIND(C, name='poisson_fft')
     use iso_c_binding
     use ftypes
     use cufft
     use cudafor
     implicit none
+    ! Input and their Fortran pointers
     type(Molecule), intent(in) :: mol 
     type(grid), intent(in):: grid_in
     type(c_ptr), intent(in), value :: k
-    type(fGrid), managed :: g
-    real, pointer :: k_p(:)
-    real :: start, finish
+    type(c_ptr), intent(in), value :: target_size
+    type(fGrid) :: g
+    real, pointer :: k_p(:), e_dens(:)
+    integer, pointer :: ts_p(:)
 
-    integer :: plan, ierr, ix, iy, iz
-    real(c_float), allocatable, managed :: k_3d(:,:,:)
+    ! GPU variables
+    complex, device, allocatable :: A_d(:,:,:)
+    real, device, allocatable :: B_d(:,:,:)
+    type(dim3) :: threads, blocks
+
+    ! Temp. and FFT variables
+    real :: start, finish
+    integer :: plan, ierr, ix, iy, iz, sx, sy, sz, npts
+    real(c_float), allocatable :: k_3d(:,:,:) !maybe managed
     complex(c_float), allocatable, managed ::  outFFT_3d(:,:,:), inFFT_3d(:,:,:)
 
-    !Fortran compability
+    ! Fortran compability
     call grid_to_fgrid(grid_in, g)
-    call c_f_pointer(k, k_p, [g%npts])
+    call c_f_pointer(target_size, ts_p, [5])
 
-    !Initialize grid and densities
-    allocate(k_3d(g%shape%x, g%shape%y, g%shape%z), &
-    inFFT_3d(g%shape%x, g%shape%y, g%shape%z), &
-    outFFT_3d(g%shape%x, g%shape%y, g%shape%z))
+    threads = dim3( 512, 1, 1) ! product of threads needs to be <=1024
+    ! blocks = dim3(ceiling(real(sx)), &
+    !                 ceiling(real(sy)), &
+    !                 ceiling(real(sz)))
+    blocks = dim3(64,64,64)
 
-    call CQ_sum(mol, grid_in, inFFT_3d)
+    ! Initialize grid and densities
+    sx = ts_p(1); sy = ts_p(3); sz = ts_p(5); npts=ts_p(1)*ts_p(3)*ts_p(5)
+
+    call c_f_pointer(k, k_p, [npts])
+
+    allocate(k_3d(sx,sy,sz), &
+    inFFT_3d(sx,sy,sz), &
+    outFFT_3d(sx,sy,sz), &
+    A_d(sx,sy,sz), &
+    B_d(sx,sy,sz))
+
+    print*, "calculating total charge densities..."
+    call cpu_time(start)
+    call CQ_sum(mol, grid_in, inFFT_3d, sx, sy, sz)
     inFFT_3d = -inFFT_3d*1/EPS0
-    k_3d = reshape(k_p, [g%shape%x, g%shape%y, g%shape%z])
+    call cpu_time(finish)
+    print*, "time to sum the densities:", finish-start
 
-    print*, "Solving for potential"
+    k_3d = reshape(k_p, [sx,sy,sz])
 
+    B_d=k_3d
+
+    ! Solution
+    print*, "solving for potential..."
     call cpu_time(start)
 
-    !Forward FFT
-    ierr = cufftPlan3D(plan, g%shape%z, g%shape%y, g%shape%x,  CUFFT_C2C)
+    ! Forward FFT
+    ierr = cufftPlan3D(plan, sz, sy, sx,  CUFFT_C2C)
     ierr = cufftExecC2C(plan, inFFT_3d, outFFT_3d, CUFFT_FORWARD)
     ierr = cudaDeviceSynchronize()
 
     if(ierr/=0) then
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during forward FFT"
     end if
-    
-    !Solving the Poisson
-    do ix=1, g%shape%x
-        do iy=1, g%shape%y
-            do iz=1, g%shape%z
-                if(k_3d(ix,iy,iz)==0)then
+
+    ! Poisson solution
+    ! A_d=outFFT_3d
+    ! call cmdiv_kernel<<<blocks, threads>>>(A_d, B_d, sx, sy, sz)
+    ! outFFT_3d = A_d
+
+    do ix=1, sx
+        do iy=1, sy
+            do iz=1, sz
+                if(k_3d(ix, iy, iz)==0) then
                     outFFT_3d(ix,iy,iz) = 0
                 else
                     outFFT_3d(ix,iy,iz) = outFFT_3d(ix,iy,iz)/k_3d(ix,iy,iz)
@@ -213,68 +326,83 @@ subroutine poisson_fft(mol, grid_in, k) BIND(C, name='poisson_fft')
             end do
         end do
     end do
+ 
+    deallocate(A_d, B_d)
 
-    !Inverse FFT
+    ! Inverse FFT
     ierr = cufftExecC2C(plan, outFFT_3d, outFFT_3d, CUFFT_INVERSE)
     ierr = cudaDeviceSynchronize()
     ierr = cufftDestroy(plan)
-
-    call cpu_time(finish)
 
     if(ierr/=0) then
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during inverse FFT"
     end if
 
-    print*, "Solution finished. Time:", finish-start
+    call cpu_time(finish)
 
-    !Save/edit data
-    call write_cube(1/real(g%npts)*real(outFFT_3d), g, mol)
+    print*, "solution time:", finish-start
+
+    ! Save/edit data
+
+    !Potential
+    !call write_cube(1/real(npts)*real(outFFT_3d), g, mol, sx, sy, sz)
+
+    !Density, file is incorrectly named pot_cuda.cube
+    call c_f_pointer(grid_in%qube, e_dens, [g%npts])
+    inFFT_3d = reshape(e_dens, [sx, sy, sz])
+    call write_cube(real(inFFT_3d), g, mol, sx, sy, sz)
 
 end subroutine
 
-
 !Write a 3D array to .cube file, pretty clunky
-subroutine write_cube(arr_in, fgrid_in, mol)
+subroutine write_cube(arr_in, fgrid_in, mol, N, M, L)
     use iso_c_binding
     use ftypes
     implicit none
     integer:: i, j, k, ios
     type(fgrid), intent(in) :: fgrid_in
     type(molecule), intent(in) :: mol
-    real(c_float), intent(in) :: arr_in(fgrid_in%shape%x, fgrid_in%shape%y, fgrid_in%shape%z)
+    integer, intent(in) :: N, M, L
+    real(c_float), intent(in) :: arr_in(N, M, L)
     integer, pointer :: Z(:)
     real, pointer :: coords(:)
-    real(c_float) :: mol_coords(mol%natoms, 3)
+    real(c_float) :: mol_coords(mol%natoms, 3), Ax, Ay, Az
 
     !Remove old file, without this unnecessary fort.1 files are created
     open(unit=1, file="pot_cuda.cube", iostat=ios, status="replace")
     if (ios==0) close(1, status="delete")
 
+    !Inter-operability
     call c_f_pointer(mol%coords, coords, [mol%natoms*3])
     call c_f_pointer(mol%types, Z, [mol%natoms])
     mol_coords = transpose(reshape(coords, [3, mol%natoms]))
 
     open(unit=1, file="pot_cuda.cube", iostat=ios, status="new", position="append")
 
+    !Change origin if grid has been padded
+    Ax = fgrid_in%origin%x-0.5*(N -fgrid_in%shape%x)*fgrid_in%step
+    Ay = fgrid_in%origin%y-0.5*(M -fgrid_in%shape%y)*fgrid_in%step
+    Az = fgrid_in%origin%z-0.5*(L -fgrid_in%shape%z)*fgrid_in%step
+
     !Header
     write(1,*) 'Comment line'
     write(1,*) 'Comment line'
-    write(1,*) mol%natoms, fgrid_in%origin%x, fgrid_in%origin%y, fgrid_in%origin%Z
-    write(1,*) fgrid_in%shape%x, fgrid_in%step, 0.0, 0.0
-    write(1,*) fgrid_in%shape%y, 0.0, fgrid_in%step, 0.0
-    write(1,*) fgrid_in%shape%z, 0.0, 0.0, fgrid_in%step
+    write(1,*) mol%natoms, Ax, Ay, Az
+    write(1,*) N, fgrid_in%step, 0.0, 0.0
+    write(1,*) M, 0.0, fgrid_in%step, 0.0
+    write(1,*) L, 0.0, 0.0, fgrid_in%step
     do i=1, mol%natoms
         write(1,*) Z(i), 0.0, mol_coords(i,1), mol_coords(i,2), mol_coords(i, 3)
     end do
 
     !Volumetric
-    do i=1, fgrid_in%shape%x
-        do j=1, fgrid_in%shape%y
-            do k=1, fgrid_in%shape%z
+    do i=1, N
+        do j=1, M
+            do k=1, L
                 if(mod(k-1,6)==5) then
-                    write(1,'(1X, F15.5)') real(arr_in(i, j, k))
+                    write(1,'(1X, F15.5)') arr_in(i, j, k)
                 else
-                    write(1,'(F15.5)', advance='no') real(arr_in(i, j, k))
+                    write(1,'(F15.5)', advance='no') arr_in(i, j, k)
                 end if
             end do
             write(1,'(1X)')

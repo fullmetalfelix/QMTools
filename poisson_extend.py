@@ -11,7 +11,7 @@ rho_el, mol_xyz, grid_origin, grid_vec = read_density_bin('density_0.025.bin')
 rho_el = -rho_el*(1/0.1)**3 # From e/voxel to -e/ang^3
 
 # Extend box
-target_size = (300, 300, 300)
+target_size = (240,240,128)
 pad_size = [(target_size[i]-rho_el.shape[i]) // 2 for i in range(3)]
 pad_size = [(p,p) for p in pad_size]
 rho_el = np.pad(rho_el, pad_size, mode='constant')
@@ -20,7 +20,6 @@ scan_window = (
     grid_origin,
     tuple([grid_origin[i] + grid_vec[i][i]*rho_el.shape[i] for i in range(3)])
 )
-print(rho_el.shape, scan_window)
 
 # Add nuclear density to total density
 rho_nuclei = nuclear_density(mol_xyz, sigma=0.1, scan_dim=rho_el.shape, scan_window=scan_window)

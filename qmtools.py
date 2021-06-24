@@ -571,7 +571,36 @@ class QMTools(Structure):
 		omega2 = [-(2*numpy.pi*numpy.fft.fftfreq(N[i], L[i]/N[i])) ** 2 for i in range(ndim)]
 		omega2 = numpy.ravel(numpy.stack(numpy.meshgrid(*omega2, indexing='ij'), axis=-1).sum(axis=-1).astype(numpy.float32), order='F')
 
-		lib.poisson_fft(byref(mol), byref(grid), omega2.ctypes.data_as(POINTER(c_float)))
+		target_size = numpy.asfortranarray([grid.shape.x,grid.shape.y,grid.shape.z])
+
+		lib.poisson_fft(byref(mol), byref(grid), omega2.ctypes.data_as(POINTER(c_float)), target_size.ctypes.data_as(POINTER(c_float)))
+
+	def padded_poisson(self, mol, grid, target_size, omega2=[]):
+		grid_vec = numpy.array([
+            [0.1, 0.0, 0.0],
+            [0.0, 0.1, 0.0],
+            [0.0, 0.0, 0.1]
+        ])
+		grid_origin=(grid.origin.x*0.529772, grid.origin.y*0.529772, grid.origin.z*0.529772)#bohr
+		grid_shape=(grid.shape.x,grid.shape.y,grid.shape.z)
+
+		pad_size = [(target_size[i]-grid_shape[i]) // 2 for i in range(3)]
+		pad_size = [(p,p) for p in pad_size]
+		grid_origin = [grid_origin[i]-grid_vec[i][i]*pad_size[i][0] for i in range(3)]
+		scan_window = (
+			grid_origin,
+			tuple([grid_origin[i] + grid_vec[i][i]*target_size[i] for i in range(3)])
+		)
+
+		ndim = 3
+		L = [scan_window[1][i]-scan_window[0][i] for i in range(ndim )]
+		N = (target_size[0],target_size[1],target_size[2])
+		omega2 = [-(2*numpy.pi*numpy.fft.fftfreq(N[i], L[i]/N[i])) ** 2 for i in range(ndim)]
+		omega2 = numpy.ravel(numpy.stack(numpy.meshgrid(*omega2, indexing='ij'), axis=-1).sum(axis=-1).astype(numpy.float32), order='F')
+		target_size = numpy.asfortranarray(target_size)
+
+		print(f"using extended grid {target_size} for Coulomb's potential solution")
+		lib.poisson_fft(byref(mol), byref(grid), omega2.ctypes.data_as(POINTER(c_float)), target_size.ctypes.data_as(POINTER(c_float)))
 
 
 
@@ -586,7 +615,8 @@ lib.qm_densityqube_shmem.argtypes = [Molecule_p, Grid_p]
 lib.qm_hartree.argtypes = [Molecule_p, Grid_p, Grid_p]
 lib.qm_gridmol_write.argtypes = [Grid_p, Molecule_p, c_char_p]
 
-lib.poisson_fft.argtypes = [Molecule_p, Grid_p, POINTER(c_float)]
+lib.poisson_fft.argtypes = [Molecule_p, Grid_p, POINTER(c_float), POINTER(c_float)]
+#lib.padded_poisson.argtypes = [Molecule_p, Grid_p, POINTER(c_float), POINTER(c_float)]
 #lib.DQ_sum.argtypes = [Molecule_p, Grid_p]
 
 

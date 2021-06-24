@@ -25,6 +25,8 @@ egrid = Grid.DensityGrid(mol, 0.05, 3.0)
 print(egrid)
 
 #vgrid = Grid.MakeGrid([-8,-8,0], 0.1, [160, 160, 64])
+#print()
+#vgrid = Grid.DensityGrid(mol, 0.1, 3.0)
 #print(vgrid)
 
 #grid = Grid.TestGrid(mol, 0.1, 0)
@@ -46,12 +48,15 @@ calculator.WriteDensity(mol, egrid, "density_0.025.bin")
 
 print()
 calculator.poisson_fft(mol, egrid)
+#calculator.padded_poisson(mol, egrid, target_size=(120,120,64))
+print()
 
 #density = calculator.ComputeDensity_subgrid(mol, egrid)
 #calculator.WriteDensity(mol, egrid, "density_0.1_sg4.bin")
-
+#t0 = time.time()
 #hartree = calculator.ComputeHartree(mol, egrid, vgrid)
-#calculator.WriteDensity(mol, vgrid, "hartree.bin")
+#print(f'Hartree solution time: {time.time()-t0:.4f}')
+#calculator.WriteDensity(mol, vgrid, "hartree_exp.bin")
 
 del mol
 del calculator

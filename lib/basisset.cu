@@ -13,7 +13,7 @@
 
 
 
-
+//Read BasisSet variables from .bin file
 
 void basisset_ini(BasisSet *basisset, const char *filename) {
 
@@ -25,7 +25,7 @@ void basisset_ini(BasisSet *basisset, const char *filename) {
 	FILE *fbin = fopen(filename, "rb");
 	int m; fread(&m, sizeof(int), 1, fbin);			// READ THE # of ATOMS IN THIS BASIS SET
 
-
+	//Initialize variables
 	basisset->atomOffset = (int*)malloc(sizeof(int) * 100);
 	basisset->nshells = (int*)calloc(MAXAOS*100, sizeof(int));
 	memset(basisset->atomOffset, -1, 100);
@@ -58,7 +58,7 @@ void basisset_ini(BasisSet *basisset, const char *filename) {
 	int z, tmpi, nc;
 	double *buffer = (double*)malloc(sizeof(double) * MAXAOC);
 
-
+	//Read variables
 	for(int i=0; i<m; i++) {
 
 		// read the Z of this atom
@@ -107,7 +107,7 @@ void basisset_ini(BasisSet *basisset, const char *filename) {
 	free(buffer);
 
 
-	// basis set parameters
+	// basis set parameters to device memory
 	cudaError_t cudaError;
 	cudaError = cudaMalloc((void**)&basisset->d_alphas, sizeof(float)*basisset->nparams); assert(cudaError == cudaSuccess);
 	cudaError = cudaMemcpy(basisset->d_alphas, basisset->alphas, sizeof(float)*basisset->nparams, cudaMemcpyHostToDevice); assert(cudaError == cudaSuccess);
