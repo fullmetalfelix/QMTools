@@ -29,7 +29,8 @@ module ftypes
         integer(c_int) :: npts, nfields
         type(float3) :: origin, Ax, Ay, Az
         real(c_float) :: step
-        type(c_ptr), managed :: qube, d_qube
+        type(c_ptr) :: qube 
+        type(c_ptr), managed :: d_qube
     END TYPE
 
     TYPE, BIND(C) :: Molecule

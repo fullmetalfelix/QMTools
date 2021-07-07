@@ -1,7 +1,9 @@
 import numpy
+import os
 from ctypes import *
 import sys
 import pickle
+import struct
 
 
 ANG2BOR = 1.8897259886
@@ -553,12 +555,12 @@ class QMTools(Structure):
 		return numpy.copy(grid._qube)
 
 
-	def poisson_fft(self, mol,  grid, omega2=[]):
+	def ComputePotential(self, mol, grid, omega2=[]):
 		grid_vec = numpy.array([
-            [0.1, 0.0, 0.0],
-            [0.0, 0.1, 0.0],
-            [0.0, 0.0, 0.1]
-        ])
+            [grid.step, 0.0, 0.0],
+            [0.0, grid.step, 0.0],
+            [0.0, 0.0, grid.step]
+        ])*0.529772
 		grid_origin=(grid.origin.x, grid.origin.y, grid.origin.z)
 		grid_shape=(grid.shape.x,grid.shape.y,grid.shape.z)
 		scan_window=(
@@ -571,17 +573,21 @@ class QMTools(Structure):
 		omega2 = [-(2*numpy.pi*numpy.fft.fftfreq(N[i], L[i]/N[i])) ** 2 for i in range(ndim)]
 		omega2 = numpy.ravel(numpy.stack(numpy.meshgrid(*omega2, indexing='ij'), axis=-1).sum(axis=-1).astype(numpy.float32), order='F')
 
-		target_size = numpy.asfortranarray([grid.shape.x,grid.shape.y,grid.shape.z])
+		target_size = numpy.asfortranarray([grid.shape.x, grid.shape.y, grid.shape.z])
 
 		lib.poisson_fft(byref(mol), byref(grid), omega2.ctypes.data_as(POINTER(c_float)), target_size.ctypes.data_as(POINTER(c_float)))
 
-	def padded_poisson(self, mol, grid, target_size, omega2=[]):
+		#lib.qm_grid_ini(byref(grid))
+
+		return grid.qube
+
+	def ComputePotential_padded(self, mol, grid, target_size, omega2=[]):
 		grid_vec = numpy.array([
-            [0.1, 0.0, 0.0],
-            [0.0, 0.1, 0.0],
-            [0.0, 0.0, 0.1]
-        ])
-		grid_origin=(grid.origin.x*0.529772, grid.origin.y*0.529772, grid.origin.z*0.529772)#bohr
+            [grid.step, 0.0, 0.0],
+            [0.0, grid.step, 0.0],
+            [0.0, 0.0, grid.step]
+        ])*0.529772
+		grid_origin=(grid.origin.x*0.529772, grid.origin.y*0.529772, grid.origin.z*0.529772) #bohr
 		grid_shape=(grid.shape.x,grid.shape.y,grid.shape.z)
 
 		pad_size = [(target_size[i]-grid_shape[i]) // 2 for i in range(3)]
@@ -594,13 +600,66 @@ class QMTools(Structure):
 
 		ndim = 3
 		L = [scan_window[1][i]-scan_window[0][i] for i in range(ndim )]
-		N = (target_size[0],target_size[1],target_size[2])
+		N = (target_size[0], target_size[1], target_size[2])
 		omega2 = [-(2*numpy.pi*numpy.fft.fftfreq(N[i], L[i]/N[i])) ** 2 for i in range(ndim)]
 		omega2 = numpy.ravel(numpy.stack(numpy.meshgrid(*omega2, indexing='ij'), axis=-1).sum(axis=-1).astype(numpy.float32), order='F')
 		target_size = numpy.asfortranarray(target_size)
 
 		print(f"using extended grid {target_size} for Coulomb's potential solution")
 		lib.poisson_fft(byref(mol), byref(grid), omega2.ctypes.data_as(POINTER(c_float)), target_size.ctypes.data_as(POINTER(c_float)))
+
+		#lib.qm_grid_ini(byref(grid))
+
+	def ReadDensity(self, file_path):
+
+		with open(file_path, 'rb') as f:
+
+			# Atom coordinates
+			N = struct.unpack('i', f.read(4))[0]
+			Zs = struct.unpack('i'*N, f.read(4*N))
+			mol_xyz = struct.unpack('f'*N*3, f.read(4*N*3))
+			mol_xyz = numpy.array(mol_xyz).reshape(N, 3)
+			mol_xyz = numpy.concatenate([mol_xyz.T, [Zs]]).T
+			# Grid coordinates and step
+			grid_origin = numpy.array(struct.unpack('fff', f.read(4*3)))
+			grid_shape = numpy.array(struct.unpack('iii', f.read(4*3)))
+			N_grid = struct.unpack('i', f.read(4))[0]
+			assert N_grid == grid_shape[0]*grid_shape[1]*grid_shape[2]
+			step = struct.unpack('f', f.read(4))[0]
+
+			# Density
+			density = numpy.frombuffer(f.read(), dtype=numpy.float32)
+
+			grid = Grid()
+			grid.origin = float3(grid_origin)
+			grid.Ax = float3([1,0,0])
+			grid.Ay = float3([0,1,0])
+			grid.Az = float3([0,0,1])
+			grid.step = c_float(step) #*ANG2BOR
+
+			npts = N_grid
+			grid.shape = dim3(grid_shape[0], grid_shape[1], grid_shape[2])
+			grid.npts = c_uint(npts)
+			grid.nfields = c_uint(1)
+
+
+			grid_shape = grid_shape / 8
+			grid_shape = grid_shape.astype(numpy.uint32)
+			grid.GPUblocks 	= dim3(grid_shape[0], grid_shape[1], grid_shape[2])
+
+			# grid._qube = numpy.zeros(npts, dtype=numpy.float32)
+			grid.qube = density.ctypes.data_as(POINTER(c_float))
+
+			# # gpu allocation
+			lib.qm_grid_ini(byref(grid))
+
+			return grid
+
+	def WriteGrid_xsf(self, molecule, grid, filename):
+
+		lib.write_xsf(byref(grid), byref(molecule), c_int(grid.shape.x), c_int(grid.shape.y), c_int(grid.shape.z))
+
+		os.rename("pot.xsf", filename)
 
 
 
@@ -616,8 +675,7 @@ lib.qm_hartree.argtypes = [Molecule_p, Grid_p, Grid_p]
 lib.qm_gridmol_write.argtypes = [Grid_p, Molecule_p, c_char_p]
 
 lib.poisson_fft.argtypes = [Molecule_p, Grid_p, POINTER(c_float), POINTER(c_float)]
-#lib.padded_poisson.argtypes = [Molecule_p, Grid_p, POINTER(c_float), POINTER(c_float)]
-#lib.DQ_sum.argtypes = [Molecule_p, Grid_p]
+lib.write_xsf.argtypes = [Grid_p, Molecule_p, c_int, c_int, c_int]
 
 
 

@@ -1,7 +1,7 @@
 
 FC = nvfortran
 CC = nvcc
-FCFLAGS = -shared -O3 -fPIC -Mcudalib=cufft -acc #-gpu=ccall
+FCFLAGS = -shared -O3 -fPIC -gpu=ccall -cuda -cudalib=cufft #-gpu=ccall -mcmodel=medium 
 CCFLAGS = -shared -O3 -rdc=true --gpu-architecture=sm_60 --compiler-options '-fPIC' #--resource-usage 
 LFLAGS  = -lm -lc -Mcudalib=cufft -L/usr/local/cuda/lib64 -lcudart -lcudadevrt
 #location for -lcufft: -I/usr/local/cuda/include -L/usr/local/cuda/lib64
@@ -23,13 +23,15 @@ $(TARGET) : $(OBJS) link.o
 link.o: vectors.o basisset.o molecule.o kernel-qube.o kernel-hartree.o automaton.o qmtools.o
 	$(CC) $(CCFLAGS) --device-link $^ --output-file $@
 %.o: %.cuf
-	$(FC) -c $(FCFLAGS) -o $@ $^
+	$(FC) -c -fPIC ftypes.cuf
+	$(FC) -c $(FCFLAGS) -o $@ $^ 
 
 ptx:
 	$(CC) $(CCFLAGS) -c automaton.cu -maxrregcount 32
 
 #clean doesn't currently automatically remove the *.o or *.mod files, '$ make clean' is required for cleaning
 clean:
-	rm -f *.o
+	rm -f *.o *.mod
+
 
 

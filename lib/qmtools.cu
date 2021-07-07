@@ -73,9 +73,11 @@ void qm_gridmol_write(Grid *g, Molecule *m, const char* filename) {
 	fwrite(&g->origin, sizeof(float3), 1, fbin);
 	fwrite(&g->shape, sizeof(dim3), 1, fbin);
 	fwrite(&g->npts, sizeof(uint), 1, fbin);
+	fwrite(&g->step, sizeof(float), 1, fbin);
+	printf("npts: %i",g->npts);
 	fwrite(g->qube, sizeof(float), g->npts, fbin);
-
-
+	printf("oh yea\n");
+	
 	fclose(fbin);
 }
 

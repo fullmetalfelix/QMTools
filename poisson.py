@@ -90,18 +90,14 @@ if __name__ == '__main__':
     )
 
     t0 = time.time()
-
     # Add nuclear density to total density
     rho_nuclei = nuclear_density(mol_xyz, sigma=0.05, scan_dim=rho_el.shape, scan_window=scan_window)
     rho_total = rho_el + rho_nuclei
 
-    print(np.sum(rho_total))
-
-
     # Solve for potential via Poisson equation
     
     pot_total_fft = poisson_fft(rho_total, scan_window=scan_window)
-    print(f'Poisson solution time with time for total densities: {time.time()-t0:.4f}')
+    print(f'Poisson solution time: {time.time()-t0:.4f}')
 
     save_cube(pot_total_fft, mol_xyz, grid_origin, grid_vec, file_path='pot.cube')
 

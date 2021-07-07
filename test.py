@@ -10,8 +10,13 @@ calculator = QMTools()
 basisset = BasisSet("cc-pvdz.bin")
 
 
-# load the molecule
-folder = "./molecule_29766_0/"
+# load the molecule, 
+# BCB: "./molecule_29766_0/"
+# Benzene: "./molecule_241_0/" 
+# Hydrogen: "./molecule_783_0/"
+# Water: "./molecule_962_0/"
+
+folder = "./molecule_241_0/"
 mol = Molecule(folder+"GEOM-B3LYP.xyz", folder+"D-CCSD.npy", basisset)
 # the xyz must contain atomic coordinates in ANGSTROM
 
@@ -21,12 +26,12 @@ mol = Molecule(folder+"GEOM-B3LYP.xyz", folder+"D-CCSD.npy", basisset)
 # mol: the molecule
 # 0.1: grid step in ANGSTROM
 # 3.0: 'fat' empty space around the molecule in ANGSTROM
-egrid = Grid.DensityGrid(mol, 0.05, 3.0)
+egrid = Grid.DensityGrid(mol, 0.1, 3.0)
 print(egrid)
 
 #vgrid = Grid.MakeGrid([-8,-8,0], 0.1, [160, 160, 64])
 #print()
-#vgrid = Grid.DensityGrid(mol, 0.1, 3.0)
+#vgrid = Grid.DensityGrid(mol, 0.05, 3.0)
 #print(vgrid)
 
 #grid = Grid.TestGrid(mol, 0.1, 0)
@@ -46,16 +51,24 @@ print(grid._qube[0,0,1])
 density = calculator.ComputeDensity(mol, egrid)
 calculator.WriteDensity(mol, egrid, "density_0.025.bin")
 
+
 print()
-calculator.poisson_fft(mol, egrid)
-#calculator.padded_poisson(mol, egrid, target_size=(120,120,64))
-print()
+#potential = calculator.ComputePotential(mol, egrid)
+
+calculator.ComputePotential_padded(mol, egrid, target_size=(200,200,200))
+
+#vgrid = calculator.ReadDensity("pot_0.05.bin", 0.05)
+#calculator.WriteGrid_xsf(mol, vgrid)
+
+calculator.WriteDensity(mol, egrid, "pot_0.05.bin")
+
+calculator.WriteGrid_xsf(mol, egrid, "plot.xsf")
 
 #density = calculator.ComputeDensity_subgrid(mol, egrid)
 #calculator.WriteDensity(mol, egrid, "density_0.1_sg4.bin")
-#t0 = time.time()
-#hartree = calculator.ComputeHartree(mol, egrid, vgrid)
-#print(f'Hartree solution time: {time.time()-t0:.4f}')
+# t0 = time.time()
+# hartree = calculator.ComputeHartree(mol, egrid, vgrid)
+# print(f'Hartree solution time: {time.time()-t0:.4f}')
 #calculator.WriteDensity(mol, vgrid, "hartree_exp.bin")
 
 del mol
