@@ -14,7 +14,7 @@ basisset = BasisSet("cc-pvdz.bin")
 
 # this is just to create a grid
 molecule = "Hydrogen"
-folder = "../molecule_783_0/"
+folder = "./molecule_783_0/"
 mol = Molecule(folder+"GEOM-B3LYP.xyz", folder+"D-CCSD.npy", basisset) 
 
 step = 0.02
