@@ -9,7 +9,7 @@ module ftypes
     EPS0 = 0.0055263494, & ! e/(V*Ang)
     PI = 4.0*atan(1.0) ! Pi
 
-    !C types: float3, BasisSet, Grid and Molecule
+    ! C types: float3, BasisSet, Grid and Molecule
     TYPE, BIND(C) :: float3
         real(c_float) :: x, y, z
     END TYPE
@@ -51,14 +51,14 @@ module ftypes
         type(c_ptr), managed :: d_coords
     END TYPE
 
-    !Type for converting Grid with C pointers to one with Fortran pointers
+    ! Type for converting Grid with C pointers to one with Fortran pointers
     TYPE, BIND(C) :: fGrid
         type(dim3) :: shape
         type(dim3) :: GPUblocks
         integer(c_int) :: npts, nfields
         type(float3) :: origin, Ax, Ay, Az
         real(c_float) :: step
-        real, pointer, managed :: qube(:), d_qube(:)
+        real(c_float), pointer, managed :: qube(:), d_qube(:)
     END TYPE
 
 end module
