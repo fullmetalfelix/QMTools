@@ -31,7 +31,7 @@ egrid = Grid.DensityGrid(mol, step, fat)
 print(egrid)
 
 density = calculator.ComputeDensity(mol, egrid)
-calculator.WriteDensity(mol, egrid, "density_"+str(step)".bin")
+calculator.WriteGrid_bin(mol, egrid, "density_"+str(step)".bin")
 
 #vgrid = Grid.MakeGrid([-8,-8,0], 0.1, [160, 160, 64])
 #print()
@@ -65,7 +65,7 @@ target_size = (egrid.shape.x, egrid.shape.y, egrid.shape.z)
 print()
 vgrid = egrid.CopyGrid()
 calculator.ComputePotential_padded(mol, egrid, vgrid, target_size=target_size, spread="gauss")
-calculator.WriteDensity(mol, egrid, "potential_"+str(step)".bin")
+calculator.WriteGrid_bin(mol, egrid, "potential_"+str(step)".bin")
 
 
 
