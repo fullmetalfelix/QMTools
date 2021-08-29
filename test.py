@@ -21,13 +21,17 @@ mol = Molecule(folder+"GEOM-B3LYP.xyz", folder+"D-CCSD.npy", basisset)
 # the xyz must contain atomic coordinates in ANGSTROM
 
 
+# - create a grid for the density
+# step: grid step in ANGSTROM
+# fat: 'fat' empty space around the molecule in ANGSTROM
+step = 0.025
+fat = 3.0
 
-# create a grid for the density
-# mol: the molecule
-# 0.1: grid step in ANGSTROM
-# 3.0: 'fat' empty space around the molecule in ANGSTROM
-egrid = Grid.DensityGrid(mol, 0.1, 3.0)
+egrid = Grid.DensityGrid(mol, step, fat)
 print(egrid)
+
+density = calculator.ComputeDensity(mol, egrid)
+calculator.WriteDensity(mol, egrid, "density_"+str(step)".bin")
 
 #vgrid = Grid.MakeGrid([-8,-8,0], 0.1, [160, 160, 64])
 #print()
@@ -48,21 +52,22 @@ print(grid._qube[0,1,0])
 print(grid._qube[0,0,1])
 '''
 
-density = calculator.ComputeDensity(mol, egrid)
-calculator.WriteDensity(mol, egrid, "density_0.025.bin")
+# - parameters for potential calculations
+# target_size: padded grid size, 
+# D: convolution constant
+# Nd: number of convolutions
+# target_size: size of padded grid, if size is kept egrid.shape.{xyz} no padding will be added
 
+D = 0.01
+Nd = 20
+target_size = (egrid.shape.x, egrid.shape.y, egrid.shape.z)
 
 print()
-#potential = calculator.ComputePotential(mol, egrid)
+vgrid = egrid.CopyGrid()
+calculator.ComputePotential_padded(mol, egrid, vgrid, target_size=target_size, spread="gauss")
+calculator.WriteDensity(mol, egrid, "potential_"+str(step)".bin")
 
-calculator.ComputePotential_padded(mol, egrid, target_size=(200,200,200))
 
-#vgrid = calculator.ReadDensity("pot_0.05.bin", 0.05)
-#calculator.WriteGrid_xsf(mol, vgrid)
-
-calculator.WriteDensity(mol, egrid, "pot_0.05.bin")
-
-calculator.WriteGrid_xsf(mol, egrid, "plot.xsf")
 
 #density = calculator.ComputeDensity_subgrid(mol, egrid)
 #calculator.WriteDensity(mol, egrid, "density_0.1_sg4.bin")
