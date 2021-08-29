@@ -65,18 +65,16 @@ void qm_grid_del(Grid *obj) {
 void qm_gridmol_write(Grid *g, Molecule *m, const char* filename) {
 
 	FILE *fbin = fopen(filename, "wb");
-
 	fwrite(&m->natoms, sizeof(int), 1, fbin);
 	fwrite(m->types, sizeof(int), m->natoms, fbin);
 	fwrite(m->coords, sizeof(float3), m->natoms, fbin);
+
 
 	fwrite(&g->origin, sizeof(float3), 1, fbin);
 	fwrite(&g->shape, sizeof(dim3), 1, fbin);
 	fwrite(&g->npts, sizeof(uint), 1, fbin);
 	fwrite(&g->step, sizeof(float), 1, fbin);
-	printf("npts: %i",g->npts);
 	fwrite(g->qube, sizeof(float), g->npts, fbin);
-	printf("oh yea\n");
 	
 	fclose(fbin);
 }
