@@ -27,7 +27,7 @@ dims = [egrid.shape.x, egrid.shape.y, egrid.shape.z]
 
 # density
 print(f"Calculating {molecule} density with step {step}")
-density = calculator.ComputeDensity(mol1, egrid).reshape((dims[0], dims[1], dims[2]), order="F")
+density = calculator.ComputeDensity(mol, egrid).reshape((dims[0], dims[1], dims[2]), order="F")
 print()
 
 # potential, gauss
