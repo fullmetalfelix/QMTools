@@ -10,7 +10,7 @@ import copy
 ANG2BOR = 1.8897259886
 
 
-lib = CDLL("./lib/libqmtools.so")
+lib = CDLL("../lib/libqmtools.so")
 
 class float3(Structure):
 	_fields_ = [
