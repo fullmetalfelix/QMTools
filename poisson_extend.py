@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 from poisson import *
 
 # Load data
-rho_el, mol_xyz, grid_origin, grid_vec = read_density_bin('density_0.025.bin')
-rho_el = -rho_el*(1/0.1)**3 # From e/voxel to -e/ang^3
+rho_el, mol_xyz, grid_origin, grid_vec, step = read_density_bin('density_0.025.bin')
+rho_el = -rho_el*(1/step)**3 # From e/voxel to -e/ang^3
 
 # Extend box
 target_size = (240,240,128)
@@ -22,7 +22,7 @@ scan_window = (
 )
 
 # Add nuclear density to total density
-rho_nuclei = nuclear_density(mol_xyz, sigma=0.1, scan_dim=rho_el.shape, scan_window=scan_window)
+rho_nuclei = nuclear_density(mol_xyz, sigma=step, scan_dim=rho_el.shape, scan_window=scan_window)
 rho_total = rho_el + rho_nuclei
 
 # Solve for potential via Poisson equation
@@ -34,7 +34,7 @@ save_cube(pot_total_fft, mol_xyz, grid_origin, grid_vec, file_path='pot_extend.c
 
 # Plot slice of potential
 z_height = 1
-ind = int((z_height - grid_origin[2]) / 0.1)
+ind = int((z_height - grid_origin[2]) / step)
 pot_slice = pot_total_fft[:,:,ind]
 
 fig = plt.figure(figsize=(6, 5))
