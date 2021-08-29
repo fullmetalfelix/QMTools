@@ -10,121 +10,96 @@ module potential
         SUBROUTINE grid_to_fgrid (grid_in, fgrid_out) BIND(C)
             USE, INTRINSIC :: ISO_C_BINDING
             use ftypes
-            type(grid), intent(in) :: grid_in
+            type(grid), intent(in), value :: grid_in
             type(fgrid), intent(out) :: fgrid_out
-            real, pointer :: qube, d_qube
+            real, pointer :: qube(:), d_qube(:)
             type(c_ptr) :: c_qube, cd_qube
         END SUBROUTINE grid_to_fgrid
-
-        attributes(global) subroutine distance_kernel( dr, step, Rx, Ry, Rz, Ax, Ay, Az, N, M, L)
-            use cudafor
-            implicit none
-            integer, value :: N, M, L
-            real, value :: step, Ax, Ay, Az, Rx, Ry, Rz
-            real(c_float), dimension(N, M, L) :: dr
-            integer :: ix, iy, iz
-        end subroutine
-
-        attributes(global) subroutine nuclear_sum_kernel (rho, dr, Z, N, M, L)
-            use cudafor
-            implicit none
-            integer, value :: N, M, L, Z
-            integer :: ix, iy, iz
-            real :: rho(N, M, L), dr(N, M, L), sigma, denom
-        end subroutine
-        
-        attributes(global) subroutine div_kernel(A, B, N, M, L)
+       
+        attributes(global) subroutine solution_kernel(A, N, M, L)
             use cudafor
             implicit none
             complex :: A(:,:,:)
+            integer, value :: N, M, L
+            integer :: i, j, k
+            real :: k_1, k_2, k_3
+        end subroutine
+
+        attributes(global) subroutine conv_kernel(A, B, N, M, L, conv)
+            use cudafor
+            implicit none
+            real :: A(:,:,:)
             real :: B(:,:,:)
             integer, value :: N, M, L
+            real, value :: conv
+            real :: val
+            integer :: i, j, k, ix, iy, iz, shiftx, shifty, shiftz
+        end subroutine
+        
+        attributes(global) subroutine gauss_blur_box_kernel(pos, Q, origin, rho, N, M, L, step)
+            use cudafor
+            implicit none
+            integer, value :: N, M, L, Q
+            real :: pos(:), rho(:,:,:), origin(:)
+            real, value :: step
+            real :: dr, side, x, y, z, denom
             integer :: i, j, k
         end subroutine
 
-        subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L)
+        subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L, conv_count, conv_const, spread)
             use cudafor
             use ftypes
             implicit none
             type(Molecule), intent(in) :: mol 
             type(Grid), intent(in) :: egrid
-            integer :: N, M, L
-            complex(c_float), dimension(N, M, L), &
-                intent(out) :: arr_out
-            real, pointer :: fqube(:), coords(:)
-            integer, pointer :: Z(:)
-            type(dim3) :: dimGrid, dimBlock
-            integer :: ix, iy, iz, at
-            real(c_float), managed :: mol_coords(mol%natoms, 3), Ax, Ay, Az, step, hstep
-            real(c_float), allocatable, managed ::  rho_e(:,:,:), rho_n(:,:,:), dr(:,:,:,:)
-            real(c_float), allocatable, device :: dr_d(:,:,:,:), rho_n_d(:,:,:)
-        end subroutine
-        
-        subroutine CQ_sum (mol, egrid, arr_out, N, M, L) BIND(C)
-            use iso_c_binding
-            use ftypes
-            implicit none
-            type(Molecule), intent(in) :: mol 
-            type(Grid), intent(in) :: egrid
+            integer(c_int), intent(in) :: conv_count, spread
+            real(c_float), intent(in) :: conv_const
             integer, intent(in) :: N, M, L
             complex(c_float), dimension(N, M, L), &
                 intent(out) :: arr_out
             real, pointer :: fqube(:), coords(:)
             integer, pointer :: Z(:)
         
-            integer :: ix, iy, iz, at
-            real(c_float) :: mol_coords(mol%natoms, 3), sigma, Ax, Ay, Az, step, hstep
-            real(c_float), allocatable ::  rho_e(:,:,:), rho_n(:,:,:), dr(:,:,:,:)
-        end subroutine        
-
-        subroutine poisson_fft (mol, grid_in, k, target_size) BIND(C, name='poisson_fft')
+            type(dim3) :: dimGrid, dimBlock
+            integer :: ix, iy, iz, at, i, j, k
+            real(c_float), managed :: mol_coords(mol%natoms, 3), Ox, Oy, Oz, step, hstep, fx, fy, fz, rx, ry, rz, D
+            real(c_float), allocatable, managed ::  rho_e(:,:,:), rho_n(:,:,:)
+            real(c_float), allocatable, device :: rho_n_d(:,:,:), rho_temp_d(:,:,:)
+            real(c_float), device :: origin(3), mol_coords_d(3)
+        end subroutine
+        
+        subroutine poisson_fft (mol, grid_in, grid_out, k2, conv_count, conv_const, target_size, spread) BIND(C, name='poisson_fft')
             use iso_c_binding
             use ftypes
             use cufft
             use cudafor
             implicit none
-            ! Input and their Fortran pointers
+
             type(Molecule), intent(in) :: mol 
-            type(grid), intent(in):: grid_in
-            type(c_ptr), intent(in), value :: k
+            type(grid), intent(inout):: grid_in, grid_out
+            integer(c_int), intent(in), value :: conv_count, spread
+            real(c_float), intent(in), value :: conv_const
             type(c_ptr), intent(in), value :: target_size
-            type(fGrid) :: g
-            real, pointer :: k_p(:)
+            type(fGrid) :: g_in, g_out
+            real, pointer :: e_dens(:)
+            real(c_float), allocatable, target :: c_qube(:)
             integer, pointer :: ts_p(:)
-        
-            ! GPU variables
-            complex, device, allocatable :: A_d(:,:,:)
-            real, device, allocatable :: B_d(:,:,:)
-            type(dim3) :: threads, blocks
-        
-            ! Temp. and FFT variables
-            real :: start, finish
-            integer :: plan, ierr, ix, iy, iz, sx, sy, sz, npts
-            real(c_float), allocatable :: k_3d(:,:,:) !maybe managed
+
+            complex, device, allocatable ::  A_d(:,:,:)
+            type(dim3) :: dimGrid, dimBlock
+
+            real :: start, finish0, finish1
+            integer(c_int) :: plan, ierr, ix, iy, iz, sx, sy, sz, npts 
             complex(c_float), allocatable, managed ::  outFFT_3d(:,:,:), inFFT_3d(:,:,:)
 
         end subroutine poisson_fft      
-
-        subroutine write_cube(arr_in, fgrid_in, mol, N, M, L)
-            use iso_c_binding
-            use ftypes
-            implicit none
-            integer:: i, j, k, ios
-            type(fgrid), intent(in) :: fgrid_in
-            type(molecule), intent(in) :: mol
-            integer, intent(in) :: N, M, L
-            real(c_float), intent(in) :: arr_in(N, M, L)
-            integer, pointer :: Z(:)
-            real, pointer :: coords(:)
-            real(c_float) :: mol_coords(mol%natoms, 3), Ax, Ay, Az
-        end subroutine write_cube
 
         subroutine write_xsf(arr_in, grid_in, mol, N, M, L)
             use iso_c_binding
             use ftypes
             implicit none
             integer:: i, j, k, ios
-            type(fgrid), intent(in) :: grid_in
+            type(Grid), intent(in) :: grid_in
             type(molecule), intent(in) :: mol
             integer, intent(in) :: N, M, L
             real(c_float), intent(in) :: arr_in(N, M, L)
@@ -148,122 +123,176 @@ module potential
             real(c_float) :: mol_coords(mol%natoms, 3), Ax, Ay, Az
         end subroutine C_write_xsf
 
+
     END INTERFACE
 
 CONTAINS
 
 ! Change grids C pointers to F pointers in a new fGrid
 SUBROUTINE grid_to_fgrid (grid_in, fgrid_out) BIND(C)
-    USE, INTRINSIC :: ISO_C_BINDING
-    use ftypes
     type(grid), intent(in), value :: grid_in
     type(fgrid), intent(out) :: fgrid_out
     real, pointer :: qube(:), d_qube(:)
     type(c_ptr) :: c_qube, cd_qube
 
-    call c_f_pointer(grid_in%qube, qube, [921600])
-    call c_f_pointer(grid_in%d_qube, d_qube, [921600])
+    call c_f_pointer(grid_in%qube, qube, [grid_in%npts])
+    call c_f_pointer(grid_in%d_qube, d_qube, [grid_in%npts])
 
     fgrid_out=fgrid(grid_in%shape, grid_in%GPUblocks, grid_in%npts, grid_in%nfields, grid_in%origin, &
                     grid_in%Ax, grid_in%Ay, grid_in%Az, grid_in%step, qube, d_qube)
 
 END SUBROUTINE
 
-! Calculate atoms distance from pos. (Rx, Ry, Rz) to all the points in a NxMxL grid with origin (Ax, Ay, Az) with GPU
-attributes(global) subroutine distance_kernel( dr, step, Rx, Ry, Rz, Ax, Ay, Az, N, M, L)
-    use cudafor
-    implicit none
-    integer, value :: N, M, L
-    real, value :: step, Ax, Ay, Az, Rx, Ry, Rz
-    real(c_float), dimension(N, M, L) :: dr
-    integer :: ix, iy, iz
-
-    ix = (blockIdx%x-1) * blockDim%x + threadIdx%x
-    iy = (blockIdx%y-1) * blockDim%y + threadIdx%y
-    iz = (blockIdx%z-1) * blockDim%z + threadIdx%z
-
-    dr(ix,iy,iz) = sqrt(((ix-1)*step + Ax - Rx)**2 &
-                        + ((iy-1)*step + Ay - Ry)**2 &
-                        + ((iz-1)*step + Az - Rz)**2)
-                          
-
-end subroutine
-
-! Calculate charge density of charge Z to distances in dr in a NxMxL grid
-attributes(global) subroutine nuclear_sum_kernel (rho, dr, Z, N, M, L)
-    use cudafor
-    implicit none
-    integer, value :: N, M, L, Z
-    integer :: ix, iy, iz
-    real :: rho(N, M, L), dr(N, M, L), sigma, denom
-
-    ix = (blockIdx%x-1) * blockDim%x + threadIdx%x
-    iy = (blockIdx%y-1) * blockDim%y + threadIdx%y
-    iz = (blockIdx%z-1) * blockDim%z + threadIdx%z
-
-    sigma = 0.1
-
-    denom = sigma*sigma*sigma*sqrt(2*pi)*2*pi
-
-    rho(ix,iy,iz) = rho(ix,iy,iz) + real(Z)/(denom)*exp(-(dr(ix,iy,iz)*dr(ix,iy,iz))/(2*sigma*sigma))
-
-end subroutine
-
-! Matrix division GPU kernel code, A(i,j,k) = A(i,j,k)/B(i,j,k)
-attributes(global) subroutine div_kernel(A, B, N, M, L)
-    use cudafor
+! Solving the Poisson's equation in frequency space
+attributes(global) subroutine solution_kernel(A, N, M, L)
     implicit none
     complex :: A(:,:,:)
-    real :: B(:,:,:)
     integer, value :: N, M, L
     integer :: i, j, k
+    real :: k_1, k_2, k_3
  
     i = (blockidx%x-1) * blockDim%x + threadidx%x
     j = (blockidx%y-1) * blockDim%y + threadidx%y
     k = (blockidx%z-1) * blockDim%z + threadidx%z
 
+    ! Sample frequencies as is done in numpy's fftfreq
+    if(i-1>N/2-1) then
+        k_1=(real(i-1-N)/N)**2
+    else
+        k_1=(real(i-1)/N)**2
+    end if
 
-    ! if (i<=N) then
-    !     if (j<=M) then
-    !         if (k<=L) then
-                if  (B(i,j,k)==0) then
-                   A(i,j,k) = 0
-                else
-                   A(i,j,k) = A(i,j,k)/B(i,j,k)
+    if(j-1>M/2-1) then
+        k_2=(real(j-1-M)/M)**2
+    else
+        k_2=(real(j-1)/M)**2
+    end if
+
+    if(k-1>L/2-1) then
+        k_3=(real(k-1-L)/L)**2
+    else
+        k_3=(real(k-1)/L)**2
+    end if
+
+    ! Division
+    if  (k_1==0.and.k_2==0.and.k_3==0) then
+        A(i,j,k) = 0
+    else
+        A(i,j,k) = -A(i,j,k)/((2.0*pi)**2*(k_1+k_2+k_3))
+    end if
+
+end subroutine
+
+! Matrix convolution GPU kernel
+attributes(global) subroutine conv_kernel(A, B, N, M, L, conv)
+    implicit none
+    real :: A(:,:,:)            ! Original values
+    real :: B(:,:,:)            ! Output values
+    integer, value :: N, M, L   ! Array dimensions
+    real, value :: conv         ! convolution constant
+    real :: val                 ! Output value for this thread
+    integer :: i, j, k, ix, iy, iz, shiftx, shifty, shiftz !Indices
+
+    ! Thread index
+    i = (blockidx%x-1) * blockDim%x + threadidx%x
+    j = (blockidx%y-1) * blockDim%y + threadidx%y
+    k = (blockidx%z-1) * blockDim%z + threadidx%z
+
+    val = 0
+
+    ! Go through neighbouring points
+    do ix=-1, 1
+        do iy=-1, 1
+            do iz=-1, 1
+                ! Index
+                shiftx = i+ix
+                shifty = j+iy
+                shiftz = k+iz
+
+                ! Periodicity
+                if ((shiftx).lt.1) shiftx = N + shiftx
+                if ((shifty).lt.1) shifty = M + shifty
+                if ((shiftz).lt.1) shiftz = L + shiftz
+                if ((shiftx).gt.N) shiftx = shiftx - N
+                if ((shifty).gt.M) shifty = shifty - M
+                if ((shiftz).gt.L) shiftz = shiftz - L
+
+                ! Values:
+                ! Center
+                if(ix==0.and.iy==0.and.iz==0) then   
+                    val = val + A(i,j,k) - conv*(8.0/sqrt(3.0)+12.0/sqrt(2.0)+6.0)*A(i,j,k)
+                ! Neighbours
+                else                                 
+                    val = val + conv/sqrt((real(ix))**2+(real(iy))**2+(real(iz))**2)*(A(shiftx, shifty, shiftz))
                 end if
-    !         end if
-    !     end if
-    ! end if
+            end do
+        end do
+    end do
+
+    ! Output
+    B(i,j,k) = val
+
+end subroutine
+
+! Spread charge Q as a Gaussian charge in a box around it
+attributes(global) subroutine gauss_blur_box_kernel(pos, Q, origin, rho, N, M, L, step)
+    implicit none
+    integer, value :: N, M, L, Q
+    real :: pos(:), rho(:,:,:), origin(:)
+    real, value :: step
+    real :: dr, side, x, y, z, denom
+    integer :: i, j, k
+
+    i = (blockidx%x-1) * blockDim%x + threadidx%x
+    j = (blockidx%y-1) * blockDim%y + threadidx%y
+    k = (blockidx%z-1) * blockDim%z + threadidx%z
+
+    side = 6.0*step
+    x = (i-1)*step+origin(1)! + 0.5*step
+    y = (j-1)*step+origin(2)! + 0.5*step
+    z = (k-1)*step+origin(3)! + 0.5*step
+
+    denom = step*step*step*sqrt(2*pi)*2*pi
+
+    ! Choose only values around a 12*sigma x 12*sigma x 12*sigma box
+    if (x<=pos(1)+side.and.x>=pos(1)-side) then
+        if (y<=pos(2)+side.and.y>=pos(2)-side) then
+            if (z<=pos(3)+side.and.z>=pos(3)-side) then
+                dr = (x-pos(1))**2+(y-pos(2))**2+(z-pos(3))**2
+                rho(i, j, k) = rho(i, j, k) + real(Q)/denom*exp(-dr/(2.0*step*step))
+            end if
+        end if
+    end if
 
 end subroutine
 
 ! Sum the electron and nuclear charge densities with GPU
-subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L)
-    use cudafor
-    use ftypes
+subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L, conv_count, conv_const, spread)
     implicit none
     type(Molecule), intent(in) :: mol 
     type(Grid), intent(in) :: egrid
-    integer :: N, M, L
+    integer(c_int), intent(in) :: conv_count, spread
+    real(c_float), intent(in) :: conv_const
+    integer, intent(in) :: N, M, L
     complex(c_float), dimension(N, M, L), &
         intent(out) :: arr_out
     real, pointer :: fqube(:), coords(:)
     integer, pointer :: Z(:)
 
     type(dim3) :: dimGrid, dimBlock
-    integer :: ix, iy, iz, at
-    real(c_float), managed :: mol_coords(mol%natoms, 3), Ax, Ay, Az, step, hstep
-    real(c_float), allocatable, managed ::  rho_e(:,:,:), rho_n(:,:,:), dr(:,:,:,:)
-    real(c_float), allocatable, device :: dr_d(:,:,:,:), rho_n_d(:,:,:)
+    integer :: ix, iy, iz, at, i, j, k
+    real(c_float), managed :: mol_coords(mol%natoms, 3), Ox, Oy, Oz, step, hstep, fx, fy, fz, rx, ry, rz, D
+    real(c_float), allocatable, managed ::  rho_e(:,:,:), rho_n(:,:,:)
+    real(c_float), allocatable, device :: rho_n_d(:,:,:), rho_temp_d(:,:,:)
+    real(c_float), device :: origin(3), mol_coords_d(3)
 
-    !Variable initialization and C operability
+    ! Variable initialization and C operability
     allocate(rho_n(N, M, L), &
+    rho_temp_d(N, M, L), &
     rho_n_d(N, M, L), &
-    rho_e(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
-    dr(N, M, L, mol%natoms), &
-    dr_d(N, M, L, mol%natoms))
+    rho_e(egrid%shape%x, egrid%shape%y, egrid%shape%z))
 
-    rho_n=0; rho_n_d=0; arr_out=0; dr=0; dr_d=0
+    rho_n=0; rho_n_d=0; arr_out=0
 
     dimGrid = dim3( N/8, M/8, L/8 )
     dimBlock = dim3( 8, 8, 8 )
@@ -272,42 +301,96 @@ subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L)
     call c_f_pointer(mol%coords, coords, [mol%natoms*3])
     call c_f_pointer(mol%types, Z, [mol%natoms])
 
-    step = egrid%step*R_BOHR
+    step = egrid%step
     hstep = 0.5*step
 
-    !Origin in ang, but moved to the middle of the voxel
-    Ax = egrid%origin%x*R_BOHR - (N - egrid%shape%x)*hstep + hstep
-    Ay = egrid%origin%y*R_BOHR - (M - egrid%shape%y)*hstep + hstep
-    Az = egrid%origin%z*R_BOHR - (L - egrid%shape%z)*hstep + hstep
-
-    ! Ax = egrid%origin%x*R_BOHR + hstep
-    ! Ay = egrid%origin%y*R_BOHR + hstep
-    ! Az = egrid%origin%z*R_BOHR + hstep
+    ! Origin in ang, if (N,M,L) isn't the original shape origin will be moved accordingly
+    Ox = egrid%origin%x - (N - egrid%shape%x)*hstep
+    Oy = egrid%origin%y - (M - egrid%shape%y)*hstep
+    Oz = egrid%origin%z - (L - egrid%shape%z)*hstep
 
     ! Nucleus' coordinates to array
     ! First atoms x is (1,1), y is (1,2)...
-    mol_coords = transpose(reshape(coords, [3, mol%natoms]))*R_BOHR
-
-    ! calculate each atoms distance to all the gridpoints, stored in dr
-    ! ex. dr(2,2,2,3) gives atom nro. 3 distance to vox' at (2,2,2)
-    do at=1, mol%natoms
-        call distance_kernel<<<dimGrid, dimBlock>>>(dr_d(:,:,:,at), step, mol_coords(at,1), mol_coords(at,2), mol_coords(at,3), Ax, Ay, Az, N, M, L)
-        ix = cudaDeviceSynchronize()
-    end do
-
-    dr = dr_d
+    mol_coords = transpose(reshape(coords, [3, mol%natoms]))
 
     ! Calculate the charge density of the nucleus
     print*, "Total charge from file:", sum(Z)
 
-    do at=1, mol%natoms
-        call nuclear_sum_kernel<<<dimGrid, dimBlock>>>(rho_n_d, dr_d(:,:,:,at), Z(at), N, M, L)
-        ix = cudaDeviceSynchronize()
-    end do
+    ! Spread with convolution or no spread
+    if (spread==0.or.spread==2) then
 
-    rho_n = rho_n_d
+        ! Place charges to the position of their nuclei
+        do at=1, mol%natoms
 
-    print*, "Total nuclear charge after spread:", sum(real(rho_n))*step**3
+            ! Nucleus position and the corner of the box where charge is spread
+            ! i's describe the indices in the array
+            ix = floor((mol_coords(at,1) - Ox)/step) +1
+            iy = floor((mol_coords(at,2) - Oy)/step) +1
+            iz = floor((mol_coords(at,3) - Oz)/step) +1
+
+            ! f's describe the distance of the nucleus to the neighbouring points
+            fx = (mol_coords(at,1) - Ox - (ix-1)*step)/step
+            fy = (mol_coords(at,2) - Oy - (iy-1)*step)/step
+            fz = (mol_coords(at,3) - Oz - (iz-1)*step)/step
+
+            ! Placement and conversion to density 
+            do i=0, 1
+                rx = 1-fx
+                if(i==1) rx = 1-rx
+                do j=0, 1
+                    ry = 1-fy
+                    if(j==1) ry = 1-ry
+                    do k=0, 1
+                        rz = 1-fz
+                        if(k==1) rz = 1-rz
+                        rho_n(ix+i,iy+j,iz+k) = real(Z(at))/step**3*rx*ry*rz
+                end do
+            end do
+            end do
+        end do
+
+        print*, "Total nuclear charge before spread:", sum(real(rho_n))*step**3
+
+        ! If convolution was chosen
+        if (spread==0) then
+            ! Init. GPU
+            rho_n_d = rho_n
+            rho_temp_d = rho_n
+
+            ! Convolve
+            do i=1, conv_count
+                call conv_kernel<<<dimGrid, dimBlock>>>(rho_n_d, rho_temp_d, N, M, L, conv_const)
+                rho_n_d = rho_temp_d
+            end do
+
+            ! Results
+            rho_n = rho_n_d
+        end if
+
+    
+    ! Spread with Gaussian   
+    else if (spread==1) then
+
+        origin = [Ox, Oy, Oz]  
+
+        do at=1, mol%natoms
+            mol_coords_d = mol_coords(at,:)
+            call gauss_blur_box_kernel<<<dimGrid, dimBlock>>>(mol_coords_d, Z(at), origin, rho_n_d, N, M, L, step)
+        end do
+
+        ! Results
+        rho_n = rho_n_d
+    else if (spread==3) then
+        rho_n=1
+    end if
+
+    print*, "Total nuclear charge after spread:", sum(rho_n)*step**3
+
+    ! Normalize, can be commented out if not wanted
+    D = sum(real(rho_n))*step**3/sum(real(Z))
+    rho_n = rho_n/D
+
+    print*, "Total nuclear charge after normalization:", sum(rho_n)*step**3
 
     ! Reshape 1D electron density to 3D and change from e/voxel to e/ang^3
     rho_e = -1/(step)**3*reshape(fqube, [egrid%shape%x, egrid%shape%y, egrid%shape%z])
@@ -318,7 +401,6 @@ subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L)
     int((L-egrid%shape%z)*0.5)+1:int((L-egrid%shape%z)*0.5)+egrid%shape%z) &
     = arr_out + rho_e 
     
-
     print*, "Total electron charge:", sum(real(arr_out))*step**3
 
     ! Sum and results
@@ -326,158 +408,66 @@ subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L)
 
     print*, "Total charge:", sum(real(arr_out))*step**3
 
-    deallocate(rho_n_d, rho_n, rho_e, dr_d, dr)
+    ! For testing the FFT
+    if (spread==3) then
+        print*, "CHANGING TO TEST CHARGES"
+        arr_out = 0
+        ! Place point charges 1/4 from the origin, new charges can be added similarly
+        arr_out(N/2-egrid%shape%x/4, M/2, L/2) = 1/(step)**3
+        arr_out(N/2+egrid%shape%x/4, M/2, L/2) = -1/(step)**3
+        ! Print the positions
+        print*, "Test charges placed at x:", Ox + real(N/2-egrid%shape%x/4)*step,";", Ox + real(N/2+egrid%shape%x/4)*step
+        print*, "y and z:", Oy + real(M/2)*step, Oz + real(L/2)*step
+    end if
+    deallocate(rho_n, rho_temp_d, rho_n_d, rho_e)
 
-end subroutine
-
-! Sum the electron and nuclear charge densities with CPU
-subroutine CQ_sum (mol, egrid, arr_out, N, M, L) BIND(C)
-    use iso_c_binding
-    use ftypes
-    implicit none
-    type(Molecule), intent(in) :: mol 
-    type(Grid), intent(in) :: egrid
-    integer, intent(in) :: N, M, L
-    complex(c_float), dimension(N, M, L), &
-        intent(out) :: arr_out
-    real, pointer :: fqube(:), coords(:)
-    integer, pointer :: Z(:)
-
-    integer :: ix, iy, iz, at
-    real(c_float) :: mol_coords(mol%natoms, 3), sigma, Ax, Ay, Az, step, hstep
-    real(c_float), allocatable ::  rho_e(:,:,:), rho_n(:,:,:), dr(:,:,:,:)
-
-    !Variable initialization and C operabitility
-    allocate(rho_n(N, M, L), &
-    rho_e(egrid%shape%x, egrid%shape%y, egrid%shape%z), &
-    dr(N, M, L, mol%natoms))
-
-    rho_n=0; sigma=0.1; arr_out=0; dr=0
-
-    call c_f_pointer(egrid%qube, fqube, [egrid%npts])
-    call c_f_pointer(mol%coords, coords, [mol%natoms*3])
-    call c_f_pointer(mol%types, Z, [mol%natoms])
-
-    step = egrid%step*R_BOHR
-    hstep = 0.5*step
-
-    Ax = egrid%origin%x*R_BOHR - (N - egrid%shape%x)*hstep
-    Ay = egrid%origin%y*R_BOHR - (M - egrid%shape%y)*hstep
-    Az = egrid%origin%z*R_BOHR - (L - egrid%shape%z)*hstep
-
-    ! Nucleus' coordinates to array
-    ! First atoms x is (1,1), y is (1,2)...
-    mol_coords = transpose(reshape(coords, [3, mol%natoms]))*R_BOHR
-
-    ! dr includes each atoms distance to a voxel in ang
-    ! ex. dr(2,2,2,3) gives atom nro. 3 distance to vox' at (2,2,2)
-    do at=1, mol%natoms
-        do ix=1, N
-            do iy=1, M
-                do iz=1, L
-                    dr(ix,iy,iz,at) = sqrt(((ix-1)*step + Ax - mol_coords(at,1)+hstep)**2 &
-                                        + ((iy-1)*step + Ay - mol_coords(at,2)+hstep)**2 &
-                                        + ((iz-1)*step + Az - mol_coords(at,3)+hstep)**2)
-                                        
-                end do
-            end do
-        end do  
-    end do
-
-    ! Calculate charge density of the nucleus
-    print*, "Total charge from file:", sum(Z)
-    
-    do ix=1, N
-        do iy=1, M
-            do iz=1, L
-                do at=1, mol%natoms
-                    rho_n(ix,iy,iz) = rho_n(ix,iy,iz) + real(Z(at))/((sigma*sqrt(2*pi))**3)*exp(-(dr(ix,iy,iz,at)**2)/(2*sigma**2))
-                end do
-            end do
-        end do
-    end do
-
-
-    print*, "Total nuclear charge after spread:", sum(real(rho_n))*step**3
-
-    ! Reshape 1D electron density to 3D and change from e/voxel to e/ang^3
-    rho_e = -1/(step)**3*reshape(fqube, [egrid%shape%x, egrid%shape%y, egrid%shape%z])
-
-    ! Ignore the padded space and add the electron charge densities to the original space
-    arr_out(int((N-egrid%shape%x)*0.5)+1:int((N-egrid%shape%x)*0.5)+egrid%shape%x, &
-           int((M-egrid%shape%y)*0.5)+1:int((M-egrid%shape%y)*0.5)+egrid%shape%y, &
-           int((L-egrid%shape%z)*0.5)+1:int((L-egrid%shape%z)*0.5)+egrid%shape%z) &
-           = arr_out + rho_e
-
-    print*, "Total electron charge:", sum(real(arr_out))*step**3
-
-    ! Sum and results
-    arr_out = rho_n + arr_out
-
-    print*, "Total charge:", sum(real(arr_out))*step**3
-    
-    
 end subroutine
 
 ! 3D FFT solution of Poisson eq. wrt. Coulombs potential from
-! charge density of a molecule. grid_in should include the electron density and
-! k2 is k^2 that is calculated in python as a 1D C pointer.
-subroutine poisson_fft(mol, grid_in, k2, target_size) BIND(C, name='poisson_fft')
-    use iso_c_binding
-    use ftypes
-    use cufft
-    use cudafor
+! charge density of a molecule. grid_in should include the electron density
+subroutine poisson_fft(mol, grid_in, grid_out, conv_count, conv_const, target_size, spread) BIND(C, name='poisson_fft')
     implicit none
 
     ! Input and their Fortran pointers
     type(Molecule), intent(in) :: mol 
-    type(grid), intent(inout):: grid_in
-    type(c_ptr), intent(in), value :: k2
+    type(grid), intent(inout):: grid_in, grid_out
+    integer(c_int), intent(in), value :: conv_count, spread
+    real(c_float), intent(in), value :: conv_const
     type(c_ptr), intent(in), value :: target_size
-    type(fGrid) :: g
-    real, pointer :: k_p(:), e_dens(:)
+    type(fGrid) :: g_in, g_out
+    real, pointer :: e_dens(:)
     real(c_float), allocatable, target :: c_qube(:)
     integer, pointer :: ts_p(:)
 
     ! GPU variables
     complex, device, allocatable ::  A_d(:,:,:)
-    real, device, allocatable :: B_d(:,:,:)
     type(dim3) :: dimGrid, dimBlock
 
     ! Temp. and FFT variables
-    real :: start, finish0, finish1, res
-    integer(c_int) :: plan, ierr, ix, iy, iz, sx, sy, sz, npts
-    real(c_float), allocatable :: k_3d(:,:,:) 
+    real :: start, finish0, finish1
+    integer(c_int) :: plan, ierr, ix, iy, iz, sx, sy, sz, npts 
     complex(c_float), allocatable, managed ::  outFFT_3d(:,:,:), inFFT_3d(:,:,:)
 
     ! Fortran compability
-    call grid_to_fgrid(grid_in, g)
+    call grid_to_fgrid(grid_in, g_in)
+    call grid_to_fgrid(grid_out, g_out)
     call c_f_pointer(target_size, ts_p, [5])
 
     ! Initialize variables, grid and densities
     sx = ts_p(1); sy = ts_p(3); sz = ts_p(5); npts=sx*sy*sz
 
-    print*, "la villa",sx,sy,sz
-
     dimGrid = dim3( sx/8, sy/8, sz/8 )
     dimBlock = dim3( 8, 8, 8 )
 
-    allocate(k_3d(sx,sy,sz), &
-    inFFT_3d(sx,sy,sz), &
+    allocate(inFFT_3d(sx,sy,sz), &
     outFFT_3d(sx,sy,sz), &
-    A_d(sx,sy,sz), &
-    B_d(sx,sy,sz))
-
-    
-
-    call c_f_pointer(k2, k_p, [npts])
-    k_3d = reshape(k_p, [sx,sy,sz])
+    A_d(sx,sy,sz))
 
     ! Sum the electron and nuclear charge densities
     write(*,'(A)'), "calculating total charge densities..."
     call cpu_time(start)
 
-    call nuclear_sum_host(mol, grid_in, inFFT_3d, sx, sy, sz)   ! CPU: call CQ_sum(mol, grid_in, inFFT_3d, sx, sy, sz)
+    call nuclear_sum_host(mol, grid_in, inFFT_3d, sx, sy, sz, conv_count, conv_const, spread)
 
     call cpu_time(finish0)
     write(*,'(A, F10.5)'), "time to sum the densities: ", finish0-start
@@ -496,33 +486,25 @@ subroutine poisson_fft(mol, grid_in, k2, target_size) BIND(C, name='poisson_fft'
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during forward FFT"
     end if
 
-    ! Poisson solution
+    ! Solution itself
     A_d=outFFT_3d
-    B_d=k_3d
 
-    call div_kernel<<<dimGrid, dimBlock>>>(A_d, B_d, sx, sy, sz)
+    call solution_kernel<<<dimGrid, dimBlock>>>(A_d, sx, sy, sz)
     outFFT_3d = A_d
 
-    deallocate(A_d, B_d)
-
-    ! CPU:
-    ! do ix=1, sx
-    !     do iy=1, sy
-    !         do iz=1, sz
-    !             if(k_3d(ix,iy,iz)==0) then
-    !                 outFFT_3d(ix,iy,iz) = 0
-    !             else
-    !                 outFFT_3d(ix,iy,iz) = outFFT_3d(ix,iy,iz)/k_3d(ix,iy,iz)
-    !             end if
-    !         end do
-    !     end do
-    ! end do
+    deallocate(A_d)
  
     ! Inverse FFT, notice cuFFT normalization iFFT(FFT(A)) = len(A)*A
+    ! Output units are volts
     ierr = cufftExecC2C(plan, outFFT_3d, outFFT_3d, CUFFT_INVERSE)
     ierr = cudaDeviceSynchronize()
     ierr = cufftDestroy(plan)
     outFFT_3d = 1/real(npts)*outFFT_3d
+
+    ! When comparing the results of the integral and the serial solutions, the results produced by this code
+    ! seemed to be 1000x too large. I couldn't find a problem in the constants etc., so the elements of the resulting array
+    ! are divided by 1000. Remove or change this accordingly
+    outFFT_3d = 1/real(1000)*outFFT_3d
 
     if(ierr/=0) then
         write(*, '(A, I0, A)'), "CUDA error ", ierr, " during inverse FFT"
@@ -533,93 +515,26 @@ subroutine poisson_fft(mol, grid_in, k2, target_size) BIND(C, name='poisson_fft'
 
     write(*,'(A, F10.5)'), "total time: ", finish1-start
 
-    ! Save/edit data
+    ! Change qube in grid_out, choose values only in the original grid
 
-    !call write_xsf(real(outFFT_3d), grid_in, mol, sx, sy, sz)
+    allocate(c_qube(grid_in%npts))
 
-    ! Change qube in grid_in
+    c_qube = reshape(real(outFFT_3d(int((sx-grid_in%shape%x)*0.5)+1:int((sx-grid_in%shape%x)*0.5)+grid_in%shape%x, &
+                                    int((sy-grid_in%shape%y)*0.5)+1:int((sy-grid_in%shape%y)*0.5)+grid_in%shape%y, &
+                                    int((sz-grid_in%shape%z)*0.5)+1:int((sz-grid_in%shape%z)*0.5)+grid_in%shape%z)), [grid_in%npts])
 
-    allocate(c_qube(npts))
 
-    c_qube = reshape(real(outFFT_3d), [npts])
+    do ix=1, grid_in%npts
+        g_out%qube(ix) = c_qube(ix)
+    end do
 
-    grid_in%npts = npts
-    grid_in%origin = float3((grid_in%origin%x-0.5*(sx -grid_in%shape%x)*grid_in%step)*R_BOHR, &
-                            (grid_in%origin%y-0.5*(sy -grid_in%shape%y)*grid_in%step)*R_BOHR, &
-                            (grid_in%origin%z-0.5*(sz -grid_in%shape%z)*grid_in%step)*R_BOHR)
+    deallocate(inFFT_3d, outFFT_3d, c_qube)
 
-    grid_in%shape = dim3(sx, sy, sz)
-    grid_in%GPUblocks = dim3( sx/8, sy/8, sz/8 )
-
-    grid_in%qube = c_loc(c_qube(1))
-
-    !call C_write_xsf(grid_in, mol, grid_in%shape%x, grid_in%shape%y, grid_in%shape%z)
-
-    !deallocate(k_3d, inFFT_3d, outFFT_3d) ! c_qube?
 
 end subroutine
 
-! Write a 3D array to .cube file
-subroutine write_cube(arr_in, fgrid_in, mol, N, M, L)
-    use iso_c_binding
-    use ftypes
-    implicit none
-    integer:: i, j, k, ios
-    type(fgrid), intent(in) :: fgrid_in
-    type(molecule), intent(in) :: mol
-    integer, intent(in) :: N, M, L
-    real(c_float), intent(in) :: arr_in(N, M, L)
-    integer, pointer :: Z(:)
-    real, pointer :: coords(:)
-    real(c_float) :: mol_coords(mol%natoms, 3), Ax, Ay, Az
-
-    !Remove old file, without this unnecessary fort.1 files are created
-    open(unit=1, file="pot_cuda.cube", iostat=ios, status="replace")
-    if (ios==0) close(1, status="delete")
-
-    !Inter-operability
-    call c_f_pointer(mol%coords, coords, [mol%natoms*3])
-    call c_f_pointer(mol%types, Z, [mol%natoms])
-    mol_coords = transpose(reshape(coords, [3, mol%natoms]))
-
-    open(unit=1, file="pot_cuda.cube", iostat=ios, status="new", position="append")
-
-    !Change origin if grid has been padded
-    Ax = fgrid_in%origin%x-0.5*(N -fgrid_in%shape%x)*fgrid_in%step
-    Ay = fgrid_in%origin%y-0.5*(M -fgrid_in%shape%y)*fgrid_in%step
-    Az = fgrid_in%origin%z-0.5*(L -fgrid_in%shape%z)*fgrid_in%step
-
-    !Header
-    write(1,*) 'Comment line'
-    write(1,*) 'Comment line'
-    write(1,*) mol%natoms, Ax, Ay, Az
-    write(1,*) N, fgrid_in%step, 0.0, 0.0
-    write(1,*) M, 0.0, fgrid_in%step, 0.0
-    write(1,*) L, 0.0, 0.0, fgrid_in%step
-    do i=1, mol%natoms
-        write(1,*) Z(i), 0.0, mol_coords(i,1), mol_coords(i,2), mol_coords(i, 3)
-    end do
-
-    !Volumetric
-    do i=1, N
-        do j=1, M
-            do k=1, L
-                if(mod(k-1,6)==5) then
-                    write(1,'(1X, F15.5)') arr_in(i, j, k)
-                else
-                    write(1,'(F15.5)', advance='no') arr_in(i, j, k)
-                end if
-            end do
-            write(1,'(1X)')
-        end do
-    end do
-    close(1)
-end subroutine write_cube
-
-! Write a 3D array to .xsf file
+! Write a 3D Fortran array to .xsf file
 subroutine write_xsf(arr_in, grid_in, mol, N, M, L)
-    use iso_c_binding
-    use ftypes
     implicit none
     integer:: i, j, k, ios
     type(Grid), intent(in) :: grid_in
@@ -631,7 +546,7 @@ subroutine write_xsf(arr_in, grid_in, mol, N, M, L)
     real(c_float) :: mol_coords(mol%natoms, 3), Ax, Ay, Az
 
     ! Remove old file, without this unnecessary fort.1 files are created
-    open(unit=1, file="pot_cuda.xsf", iostat=ios, status="replace")
+    open(unit=1, file="nuclear_conv20_d0.01.xsf", iostat=ios, status="replace")
     if (ios==0) close(1, status="delete")
 
     ! Inter-operability
@@ -642,7 +557,7 @@ subroutine write_xsf(arr_in, grid_in, mol, N, M, L)
     ! print*, Z
     ! print*, mol%natoms
 
-    open(unit=1, file="pot_cuda.xsf", iostat=ios, status="new", position="append")
+    open(unit=1, file="nuclear_conv20_d0.01.xsf", iostat=ios, status="new", position="append")
 
     ! Change origin if grid has been padded
     Ax = (grid_in%origin%x-0.5*(N -grid_in%shape%x)*grid_in%step)*R_BOHR
@@ -678,8 +593,6 @@ end subroutine write_xsf
 
 ! Write a 3D C pointer to .xsf file
 subroutine C_write_xsf(grid_in, mol, N, M, L) BIND(C, name="write_xsf")
-    use iso_c_binding
-    use ftypes
     implicit none
     integer:: i, j, k, ios
     type(Grid), intent(in) :: grid_in
@@ -700,21 +613,13 @@ subroutine C_write_xsf(grid_in, mol, N, M, L) BIND(C, name="write_xsf")
     call c_f_pointer(mol%coords, coords, [mol%natoms*3])
     call c_f_pointer(mol%types, Z, [mol%natoms])
     mol_coords = transpose(reshape(coords, [3, mol%natoms]))*R_BOHR
-    ! arr = reshape(qube_p, [N,M,L], order=[1,2,3])
+
+    ! Origin
+    Ax = grid_in%origin%x*R_BOHR
+    Ay = grid_in%origin%y*R_BOHR
+    Az = grid_in%origin%z*R_BOHR
 
     open(unit=1, file="pot.xsf", iostat=ios, status="new", position="append")
-
-    ! Change origin if grid has been padded
-    ! Ax = (grid_in%origin%x-0.5*(N -grid_in%shape%x)*grid_in%step)*R_BOHR
-    ! Ay = (grid_in%origin%y-0.5*(M -grid_in%shape%y)*grid_in%step)*R_BOHR
-    ! Az = (grid_in%origin%z-0.5*(L -grid_in%shape%z)*grid_in%step)*R_BOHR
-
-    Ax = grid_in%origin%x
-    Ay = grid_in%origin%y
-    Az = grid_in%origin%z
-
-    
-
 
     ! Atom coords
     write(1,*) 'ATOMS'
@@ -735,7 +640,7 @@ subroutine C_write_xsf(grid_in, mol, N, M, L) BIND(C, name="write_xsf")
     write(1,*) 0.0, 0.0, grid_in%step*R_BOHR*L
 
     ! Data, for some cursed reason can't write it in one go
-    write(1,*) (qube_p(i), i=1, grid_in%npts/2) !(((arr(i,j,k), i=1,N), j=1, M), k=1, L)
+    write(1,*) (qube_p(i), i=1, grid_in%npts/2)
     write(1,*) (qube_p(i), i=grid_in%npts/2+1, grid_in%npts)
 
     ! End
@@ -744,5 +649,6 @@ subroutine C_write_xsf(grid_in, mol, N, M, L) BIND(C, name="write_xsf")
     close(1)
 
 end subroutine C_write_xsf
+
 
 end module
