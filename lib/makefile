@@ -1,10 +1,9 @@
 
 FC = nvfortran
 CC = nvcc
-FCFLAGS = -shared -O3 -fPIC -gpu=ccall -cuda -cudalib=cufft #-gpu=ccall -mcmodel=medium 
+FCFLAGS = -shared -O3 -fPIC -gpu=ccall -cuda -cudalib=cufft
 CCFLAGS = -shared -O3 -rdc=true --gpu-architecture=sm_60 --compiler-options '-fPIC' #--resource-usage 
-LFLAGS  = -lm -lc -Mcudalib=cufft -L/usr/local/cuda/lib64 -lcudart -lcudadevrt
-#location for -lcufft: -I/usr/local/cuda/include -L/usr/local/cuda/lib64
+LFLAGS  = -lm -lc -Mcudalib=cufft # -lcudart -lcudadevrt
 TARGET = libqmtools.so
 OBJS = $(addsuffix .o,$(basename $(SRC))) 
 SRC = vectors.cu basisset.cu molecule.cu kernel-qube.cu kernel-hartree.cu automaton.cu qmtools.cu \
@@ -16,8 +15,6 @@ SRC = vectors.cu basisset.cu molecule.cu kernel-qube.cu kernel-hartree.cu automa
 
 $(TARGET) : $(OBJS) link.o
 	$(FC) -Mcuda -shared -o $@ $^ $(LFLAGS)
-# For linking with nvcc (doesn't work): $(CC) -rdc=true --shared -o $@ $^ $(LFLAGS)
-
 %.o: %.cu
 	$(CC) $(CCFLAGS) --device-c $< --output-file $@ 
 link.o: vectors.o basisset.o molecule.o kernel-qube.o kernel-hartree.o automaton.o qmtools.o
