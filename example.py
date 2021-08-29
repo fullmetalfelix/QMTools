@@ -12,7 +12,7 @@ basisset = BasisSet("cc-pvdz.bin")
 # Hydrogen: "./molecule_783_0/"
 # Water: "./molecule_962_0/"
 
-folder1 = "../molecule_783_0/" # Hydrogen
+folder1 = "./molecule_783_0/" # Hydrogen
 # folder2 = "./molecule_241_0/" # Benzene
 mol1 = Molecule(folder1+"GEOM-B3LYP.xyz", folder1+"D-CCSD.npy", basisset)
 # mol2 = Molecule(folder2+"GEOM-B3LYP.xyz", folder2+"D-CCSD.npy", basisset)
@@ -60,9 +60,9 @@ ind1 = int((z_height - vgrid1.origin.z*0.529772) / step)
 # ind2 = int((z_height - vgrid2.origin.z*0.529772) / step)
 
 e1 = density1[:,:,ind1]
-# p1 = potential1[:,:,ind1]
+p1 = potential1[:,:,ind1]
 
-e2 = density2[:,:,ind2]
+# e2 = density2[:,:,ind2]
 # p2 = potential2[:,:,ind2]
 
 fig, axs = plt.subplots(1,2)
