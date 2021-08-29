@@ -14,7 +14,7 @@ basisset = BasisSet("cc-pvdz.bin")
 
 # params.
 molecule = "BCB"
-folder = "../molecule_29766_0/"
+folder = "./molecule_29766_0/"
 step = 0.05
 fat = 3.0
 D = 0.01
