@@ -23,17 +23,19 @@ def read_density_bin(file_path):
         grid_origin = np.array(struct.unpack('fff', f.read(4*3))) * R_BOHR
         grid_shape = struct.unpack('iii', f.read(4*3))
         N_grid = struct.unpack('i', f.read(4))[0]
-        grid_vec = np.array([
-            [0.1, 0.0, 0.0],
-            [0.0, 0.1, 0.0],
-            [0.0, 0.0, 0.1]
-        ]) # The binary has hard-coded 0.1 ang grid step
+        
         assert N_grid == grid_shape[0]*grid_shape[1]*grid_shape[2]
+        step = struct.unpack('f', f.read(4))[0]*R_BOHR
+        grid_vec = np.array([
+            [step, 0.0, 0.0],
+            [0.0, step, 0.0],
+            [0.0, 0.0, step]
+        ])
 
         # Density
         density = np.frombuffer(f.read(), dtype=np.float32).reshape(grid_shape, order='F')
 
-    return density, mol_xyz, grid_origin, grid_vec
+    return density, mol_xyz, grid_origin, grid_vec, step
 
 def poisson_fft(rho, scan_window=((-10, -10, -10), (10, 10, 10))):
     ndim = rho.ndim
@@ -80,8 +82,8 @@ def nuclear_density(mol_xyz, sigma=0.5, scan_dim=(200,200,200), scan_window=((-1
 if __name__ == '__main__':
 
     # Load electron density from binary file
-    rho_el, mol_xyz, grid_origin, grid_vec = read_density_bin('density_0.025.bin')
-    rho_el = -rho_el*(1/0.1)**3 # From e/voxel to e/ang^3
+    rho_el, mol_xyz, grid_origin, grid_vec, step = read_density_bin('density_0.025.bin')
+    rho_el = -rho_el*(1/step)**3 # From e/voxel to e/ang^3
 
     #scan_window = ((from), (to))
     scan_window = (
@@ -91,7 +93,7 @@ if __name__ == '__main__':
 
     t0 = time.time()
     # Add nuclear density to total density
-    rho_nuclei = nuclear_density(mol_xyz, sigma=0.05, scan_dim=rho_el.shape, scan_window=scan_window)
+    rho_nuclei = nuclear_density(mol_xyz, sigma=step, scan_dim=rho_el.shape, scan_window=scan_window)
     rho_total = rho_el + rho_nuclei
 
     # Solve for potential via Poisson equation
@@ -103,7 +105,7 @@ if __name__ == '__main__':
 
     # Plot slice of potential
     z_height = 1
-    ind = int((z_height - grid_origin[2]) / 0.1)
+    ind = int((z_height - grid_origin[2]) / step)
     pot_slice = pot_total_fft[:,:,ind]
 
     fig = plt.figure(figsize=(6, 5))
