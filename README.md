@@ -11,7 +11,7 @@ make
 
 # Execution
 
-get an interactive session:
+get an interactive session, larger grids (step<0.05) likely require more mem-per-cpu:
 
 ```
 sinteractive -t 10 --gres=gpu:v100:1 --mem-per-cpu=2000
