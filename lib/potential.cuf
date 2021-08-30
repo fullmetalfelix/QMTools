@@ -176,7 +176,7 @@ attributes(global) subroutine solution_kernel(A, N, M, L)
 
     ! Division
     if  (k_1==0.and.k_2==0.and.k_3==0) then
-        A(i,j,k) = 0
+        A(i,j,k) = 0    ! This could be used to fiddle with boundary conditions
     else
         A(i,j,k) = -A(i,j,k)/((2.0*pi)**2*(k_1+k_2+k_3))
     end if
@@ -254,7 +254,7 @@ attributes(global) subroutine gauss_blur_box_kernel(pos, Q, origin, rho, N, M, L
 
     denom = step*step*step*sqrt(2*pi)*2*pi
 
-    ! Choose only values around a 12*sigma x 12*sigma x 12*sigma box
+    ! Choose only values around a 12*sigma x 12*sigma x 12*sigma box of the nuclei
     if (x<=pos(1)+side.and.x>=pos(1)-side) then
         if (y<=pos(2)+side.and.y>=pos(2)-side) then
             if (z<=pos(3)+side.and.z>=pos(3)-side) then
@@ -380,6 +380,8 @@ subroutine nuclear_sum_host(mol, egrid, arr_out, N, M, L, conv_count, conv_const
 
         ! Results
         rho_n = rho_n_d
+
+    ! Test charges
     else if (spread==3) then
         rho_n=1
     end if
