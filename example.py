@@ -1,3 +1,6 @@
+"""
+Example code for calculating a molecules electrostatic potential
+"""
 from qmtools import BasisSet, Molecule, QMTools, Grid
 import numpy
 import matplotlib.pyplot as plt
