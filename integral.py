@@ -1,3 +1,6 @@
+"""
+Plotting script used to compare the accuracy of potential calculation methods to the integral solution.
+"""
 import glob
 from qmtools import BasisSet, Molecule, QMTools, Grid
 import numpy
