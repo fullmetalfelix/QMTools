@@ -1,3 +1,6 @@
+"""
+Plotting script used to compare the convergence of a method for calculating the potential.
+"""
 import glob
 from qmtools import BasisSet, Molecule, QMTools, Grid
 import numpy
