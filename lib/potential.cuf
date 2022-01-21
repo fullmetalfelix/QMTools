@@ -143,7 +143,7 @@ SUBROUTINE grid_to_fgrid (grid_in, fgrid_out) BIND(C)
 
 END SUBROUTINE
 
-! Solving the Poisson's equation in frequency space
+! Solving the Poisson's equation in frequency space after taking an FFT
 attributes(global) subroutine solution_kernel(A, N, M, L)
     implicit none
     complex :: A(:,:,:)
@@ -465,7 +465,7 @@ subroutine poisson_fft(mol, grid_in, grid_out, conv_count, conv_const, target_si
     outFFT_3d(sx,sy,sz), &
     A_d(sx,sy,sz))
 
-    ! Sum the electron and nuclear charge densities
+    ! Getting the net charge densities from nucleus and electrons
     write(*,'(A)'), "calculating total charge densities..."
     call cpu_time(start)
 
@@ -479,7 +479,7 @@ subroutine poisson_fft(mol, grid_in, grid_out, conv_count, conv_const, target_si
     ! Solution for Poisson
     write(*,'(A)'), "solving for potential..."
 
-    ! Forward FFT
+    ! Taking the FFT
     ierr = cufftPlan3D(plan, sz, sy, sx,  CUFFT_C2C)
     ierr = cufftExecC2C(plan, inFFT_3d, outFFT_3d, CUFFT_FORWARD)
     ierr = cudaDeviceSynchronize()
@@ -561,7 +561,7 @@ subroutine write_xsf(arr_in, grid_in, mol, N, M, L)
 
     open(unit=1, file="nuclear_conv20_d0.01.xsf", iostat=ios, status="new", position="append")
 
-    ! Change origin if grid has been padded
+    ! Recalculating origin after padding
     Ax = (grid_in%origin%x-0.5*(N -grid_in%shape%x)*grid_in%step)*R_BOHR
     Ay = (grid_in%origin%y-0.5*(M -grid_in%shape%y)*grid_in%step)*R_BOHR
     Az = (grid_in%origin%z-0.5*(L -grid_in%shape%z)*grid_in%step)*R_BOHR
@@ -610,13 +610,13 @@ subroutine C_write_xsf(grid_in, mol, N, M, L) BIND(C, name="write_xsf")
     open(unit=1, file="pot.xsf", iostat=ios, status="replace")
     if (ios==0) close(1, status="delete")
     
-    ! Inter-operability
+    ! Fortran-C pointers
     call c_f_pointer(grid_in%qube, qube_p, [grid_in%npts])
     call c_f_pointer(mol%coords, coords, [mol%natoms*3])
     call c_f_pointer(mol%types, Z, [mol%natoms])
     mol_coords = transpose(reshape(coords, [3, mol%natoms]))*R_BOHR
 
-    ! Origin
+    ! Define the Origin
     Ax = grid_in%origin%x*R_BOHR
     Ay = grid_in%origin%y*R_BOHR
     Az = grid_in%origin%z*R_BOHR
@@ -634,14 +634,14 @@ subroutine C_write_xsf(grid_in, mol, N, M, L) BIND(C, name="write_xsf")
     write(1,'(A)') '  volumetric_data'
     write(1,'(A)') '  BEGIN_DATAGRID_3D_this_is_3Dgrid#1'
 
-    ! Size, origin and span
+    ! Define the size and origin
     write(1,*) N, M, L
     write(1,*) Ax, Ay, Az
     write(1,*) grid_in%step*R_BOHR*N, 0.0, 0.0
     write(1,*) 0.0, grid_in%step*R_BOHR*M, 0.0
     write(1,*) 0.0, 0.0, grid_in%step*R_BOHR*L
 
-    ! Data, for some cursed reason can't write it in one go
+    ! Writing the data
     write(1,*) (qube_p(i), i=1, grid_in%npts/2)
     write(1,*) (qube_p(i), i=grid_in%npts/2+1, grid_in%npts)
 
